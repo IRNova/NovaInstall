@@ -1,0 +1,9 @@
+name = "nova-install"
+main = "worker.js"
+compatibility_date = "2025-11-04"
+workers_dev = true
+
+# Origin(s) allowed to call this proxy. Add your GitHub Pages origin here.
+# Multiple origins can be separated with commas.
+[vars]
+ALLOWED_ORIGINS = "https://irnova.github.io"

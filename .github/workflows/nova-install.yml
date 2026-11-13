@@ -1,0 +1,117 @@
+name: Nova Install
+
+# نصب کامل Nova Worker روی کلودفلر:
+#   Worker + KV + رمز مدیریت + دامنهٔ workers.dev
+# خروجی: Step Summary + artifact «nova-install-result» شامل صفحهٔ نتیجهٔ گرافیکی
+#
+# پیشنهاد امنیتی: این workflow را در یک مخزن خصوصی اجرا کن.
+# توکن کلودفلر را می‌توانی به‌جای input، در Settings → Secrets as CF_API_TOKEN ذخیره کنی.
+
+on:
+  workflow_dispatch:
+    inputs:
+      cf_api_token:
+        description: "Cloudflare API Token — Workers Scripts:Edit + Workers KV Storage:Edit (اگر خالی بماند از secret با نام CF_API_TOKEN خوانده می‌شود)"
+        required: false
+        type: string
+      cf_email:
+        description: "روش جایگزین: ایمیل حساب کلودفلر (همراه با cf_api_key)"
+        required: false
+        type: string
+      cf_api_key:
+        description: "روش جایگزین: Global API Key کلودفلر"
+        required: false
+        type: string
+      account_id:
+        description: "شناسهٔ حساب کلودفلر (اگر توکن به چند حساب دسترسی دارد الزامی است)"
+        required: false
+        type: string
+      worker_name:
+        description: "نام Worker (حروف کوچک لاتین، عدد، خط تیره)"
+        required: false
+        default: "nova-worker"
+        type: string
+      admin_password:
+        description: "رمز مدیریت پنل — خالی بماند، رمز قوی خودکار ساخته می‌شود (حداقل ۸ نویسه)"
+        required: false
+        type: string
+      panel_url:
+        description: "آدرس پنل استاتیک"
+        required: false
+        default: "https://nova-panel.github.io"
+        type: string
+      custom_url:
+        description: "آدرس عمومی دلخواه (دامنهٔ شخصی/Route) — به‌جای workers.dev"
+        required: false
+        type: string
+      worker_source:
+        description: "مسیر/URL سورس Worker (خالی = آخرین نسخه از GitHub: IRNova/NovaWorker)"
+        required: false
+        type: string
+      enable_workers_dev:
+        description: "فعال‌سازی مسیر workers.dev (اگر خاموش باشد باید custom_url بدهی)"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nova-install-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  install:
+    name: Deploy Nova Worker
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Locate installer
+        id: locate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f "NovaInstall/scripts/install.mjs" ]; then
+            echo "script=NovaInstall/scripts/install.mjs" >> "$GITHUB_OUTPUT"
+            echo "out=NovaInstall/out" >> "$GITHUB_OUTPUT"
+          elif [ -f "scripts/install.mjs" ]; then
+            echo "script=scripts/install.mjs" >> "$GITHUB_OUTPUT"
+            echo "out=out" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::NovaInstall scripts were not found in this repository."
+            exit 1
+          fi
+
+      - name: Run Nova installer
+        env:
+          CF_API_TOKEN: ${{ inputs.cf_api_token || secrets.CF_API_TOKEN }}
+          CF_EMAIL: ${{ inputs.cf_email || secrets.CF_EMAIL }}
+          CF_API_KEY: ${{ inputs.cf_api_key || secrets.CF_API_KEY }}
+          CF_ACCOUNT_ID: ${{ inputs.account_id || secrets.CF_ACCOUNT_ID }}
+          WORKER_NAME: ${{ inputs.worker_name }}
+          ADMIN_PASSWORD: ${{ inputs.admin_password || secrets.ADMIN_PASSWORD }}
+          PANEL_URL: ${{ inputs.panel_url }}
+          CUSTOM_URL: ${{ inputs.custom_url }}
+          WORKER_SOURCE: ${{ inputs.worker_source }}
+          ENABLE_WORKERS_DEV: ${{ inputs.enable_workers_dev }}
+          FORCE_COLOR: "0"
+        run: node "${{ steps.locate.outputs.script }}"
+
+      - name: Upload result page
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nova-install-result
+          path: ${{ steps.locate.outputs.out || 'NovaInstall/out' }}
+          if-no-files-found: warn
+          retention-days: 14
