@@ -1,0 +1,739 @@
+<!doctype html>
+<html lang="fa" dir="rtl" data-status="success">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="robots" content="noindex, nofollow" />
+<title>Nova Worker — Installer</title>
+<style>
+@font-face{font-family:'Vazirmatn';src:url(data:font/woff2;base64,@@NOVA_FONT_B64@@) format('woff2');font-weight:100 900;font-style:normal;font-display:swap}
+:root{
+  --bg:#f4f6fb; --card:#ffffff; --c2:#f7f9fc; --bd:#e6eaf1; --bd2:#dde2eb;
+  --tx:#101622; --tx2:#445066; --mu:#8a93a6;
+  --ac:#0ea5c4; --ac2:#7c3aed;
+  --ac-soft:rgba(14,165,196,.10);
+  --grad:linear-gradient(120deg,#0891b2,#7c3aed);
+  --ring:rgba(8,145,178,.22);
+  --ok:#16a34a; --ok-soft:rgba(22,163,74,.09); --ok-bd:rgba(22,163,74,.22);
+  --dg:#e5484d; --dg-soft:rgba(229,72,77,.07); --dg-bd:rgba(229,72,77,.22);
+  --wn:#b45309; --wn-soft:rgba(180,83,9,.07); --wn-bd:rgba(180,83,9,.20);
+  --shadow:0 1px 2px rgba(20,40,80,.04),0 22px 50px rgba(40,60,110,.13);
+  --shadow-sm:0 1px 2px rgba(20,40,80,.05);
+  --mono:'JetBrains Mono','Cascadia Code',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  min-height:100vh; background:var(--bg); color:var(--tx);
+  font-family:'Vazirmatn','Inter',system-ui,-apple-system,'Segoe UI',Tahoma,sans-serif;
+  font-size:14px; line-height:1.8; overflow-x:clip;
+}
+body::before{
+  content:""; position:fixed; inset:0; z-index:-2; pointer-events:none;
+  background:
+    radial-gradient(760px 420px at 12% -10%, rgba(14,165,196,.16), transparent 62%),
+    radial-gradient(700px 430px at 92% 2%, rgba(124,58,237,.14), transparent 58%),
+    radial-gradient(900px 520px at 50% 120%, rgba(14,165,196,.10), transparent 60%);
+}
+body::after{
+  content:""; position:fixed; inset:0; z-index:-1; pointer-events:none; opacity:.5;
+  background-image:linear-gradient(rgba(16,22,34,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(16,22,34,.035) 1px,transparent 1px);
+  background-size:44px 44px;
+  -webkit-mask-image:radial-gradient(760px 620px at 50% 30%,#000 18%,transparent 78%);
+          mask-image:radial-gradient(760px 620px at 50% 30%,#000 18%,transparent 78%);
+}
+.wrap{max-width:1000px; margin:0 auto; padding:26px 18px 54px; position:relative; z-index:1}
+
+/* ---------------------------------------------------------------- top bar */
+.topbar{display:flex; align-items:center; justify-content:space-between; gap:14px; margin-bottom:18px; flex-wrap:wrap}
+.brand{display:flex; align-items:center; gap:12px; min-width:0}
+.brand .lg{
+  width:46px;height:46px;border-radius:14px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(180deg,#fff,#f6f9fd);border:1px solid var(--bd);
+  box-shadow:0 6px 16px rgba(40,60,110,.10),inset 0 1px 0 #fff;overflow:hidden;
+}
+.brand .lg svg{width:32px;height:32px;display:block}
+.brand .bt{display:flex;flex-direction:column;line-height:1.3;min-width:0}
+.brand .bt strong{font-size:17px;font-weight:800;letter-spacing:-.3px}
+.brand .bt small{font-size:11px;font-weight:600;color:var(--mu);letter-spacing:.5px}
+.badge{
+  font-size:9.5px;font-weight:800;letter-spacing:1.1px;color:var(--ac2);
+  background:rgba(124,58,237,.09);border:1px solid rgba(124,58,237,.22);
+  padding:3px 8px;border-radius:999px;margin-inline-start:4px;
+}
+.lang{display:flex;gap:3px;background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:3px;box-shadow:var(--shadow-sm)}
+.lang button{
+  border:none;background:transparent;color:var(--mu);font:inherit;font-size:12px;font-weight:700;
+  padding:6px 11px;border-radius:9px;cursor:pointer;transition:.14s;letter-spacing:.2px;
+}
+.lang button:hover{color:var(--tx2)}
+.lang button.on{background:var(--grad);color:#fff;box-shadow:0 4px 12px rgba(8,145,178,.28)}
+
+/* ------------------------------------------------------------------- card */
+.card{
+  position:relative; background:var(--card); border:1px solid var(--bd); border-radius:20px;
+  box-shadow:var(--shadow); padding:24px;
+}
+.card + .card, .grid2 + .card, .card + .grid2, .grid2 + .grid2{margin-top:16px}
+.card h2{font-size:14px;font-weight:800;letter-spacing:-.2px;margin:0 0 16px;display:flex;align-items:center;gap:9px}
+.card h2 svg{width:17px;height:17px;color:var(--ac)}
+.card h2 .count{font-size:11px;font-weight:700;color:var(--mu);margin-inline-start:auto;direction:ltr;unicode-bidi:isolate}
+
+/* ------------------------------------------------------------------- hero */
+.hero{padding:30px 28px 26px;overflow:hidden}
+.hero::before{content:"";position:absolute;inset:0 0 auto 0;height:4px;background:var(--grad)}
+html[data-status="failed"] .hero::before{background:linear-gradient(120deg,#e5484d,#b45309)}
+.hero-top{display:flex;align-items:flex-start;gap:16px;margin-bottom:16px}
+.status-ico{
+  width:62px;height:62px;border-radius:19px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;
+  background:var(--ok-soft);border:1px solid var(--ok-bd);color:var(--ok);
+  box-shadow:0 10px 24px rgba(22,163,74,.12);
+}
+html[data-status="failed"] .status-ico{background:var(--dg-soft);border-color:var(--dg-bd);color:var(--dg);box-shadow:0 10px 24px rgba(229,72,77,.12)}
+.status-ico svg{width:30px;height:30px}
+.eyebrow{
+  display:inline-flex;align-items:center;gap:7px;font-size:10.5px;font-weight:800;letter-spacing:1.2px;
+  text-transform:uppercase;color:var(--ac);background:var(--ac-soft);border:1px solid rgba(14,165,196,.18);
+  padding:4px 10px;border-radius:999px;margin-bottom:10px;
+}
+html[data-status="failed"] .eyebrow{color:var(--dg);background:var(--dg-soft);border-color:var(--dg-bd)}
+h1{font-size:25px;font-weight:800;letter-spacing:-.6px;line-height:1.3;margin:0}
+.sub{margin:8px 0 0;font-size:13.5px;line-height:1.8;color:var(--tx2);max-width:62ch}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.chip{
+  font-size:11.5px;font-weight:700;color:var(--tx2);background:var(--c2);
+  border:1px solid var(--bd);padding:5px 11px;border-radius:999px;white-space:nowrap;
+  display:inline-flex;align-items:center;gap:6px;
+}
+.chip b{color:var(--tx);font-weight:800}
+.chip .dotmark{width:7px;height:7px;border-radius:50%;background:var(--ok);flex:0 0 auto}
+html[data-status="failed"] .chip .dotmark{background:var(--dg)}
+
+/* -------------------------------------------------------------- cred grid */
+.grid2{display:grid;grid-template-columns:1.15fr .85fr;gap:16px;margin-top:16px}
+.cred{display:flex;flex-direction:column;min-width:0}
+.label{
+  display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;color:var(--mu);
+  letter-spacing:.3px;margin-bottom:10px;
+}
+.label svg{width:15px;height:15px;color:var(--ac);flex:0 0 auto}
+.urlbox{
+  display:flex;align-items:center;gap:8px;background:var(--c2);border:1px solid var(--bd2);
+  border-radius:12px;padding:10px 12px;direction:ltr;min-width:0;
+}
+.urlbox a{
+  font-family:var(--mono);font-size:12.5px;color:var(--tx);text-decoration:none;flex:1;min-width:0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;
+}
+.urlbox a:hover{color:var(--ac)}
+.secret{display:flex;gap:8px}
+.secret input{
+  flex:1;min-width:0;background:var(--c2);border:1px solid var(--bd2);border-radius:12px;
+  padding:10px 12px;font-family:var(--mono);font-size:13px;color:var(--tx);
+  direction:ltr;text-align:left;outline:none;transition:.14s;
+}
+.secret input:focus{border-color:var(--ac);background:#fff;box-shadow:0 0 0 4px var(--ring)}
+.hint{font-size:11.5px;color:var(--mu);margin-top:10px;line-height:1.7}
+.actions{display:flex;gap:8px;margin-top:auto;padding-top:14px;flex-wrap:wrap}
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;border-radius:11px;
+  padding:9px 14px;font:inherit;font-size:12.5px;font-weight:800;cursor:pointer;
+  border:1px solid var(--bd);background:var(--card);color:var(--tx2);
+  transition:.14s;text-decoration:none;white-space:nowrap;
+}
+.btn:hover{border-color:var(--bd2);transform:translateY(-1px);box-shadow:0 9px 20px rgba(40,60,110,.10)}
+.btn svg{width:15px;height:15px}
+.btn-primary{background:var(--grad);border-color:transparent;color:#fff;box-shadow:0 10px 24px rgba(8,145,178,.24)}
+.btn-primary:hover{box-shadow:0 12px 28px rgba(8,145,178,.30)}
+.btn-icon{width:38px;height:38px;padding:0;flex:0 0 auto}
+
+/* --------------------------------------------------------------------- qr */
+.qr-card{display:flex;align-items:center;gap:24px;flex-wrap:wrap}
+.qr-box{
+  width:168px;height:168px;flex:0 0 auto;background:#fff;border:1px solid var(--bd);
+  border-radius:16px;padding:10px;display:grid;place-items:center;box-shadow:var(--shadow-sm);
+}
+.qr-box img,.qr-box canvas{display:block;width:100%!important;height:100%!important}
+.qr-copy{flex:1;min-width:210px}
+
+/* ------------------------------------------------------------------ steps */
+.steps{list-style:none;margin:0;padding:0}
+.step{display:grid;grid-template-columns:28px 1fr;gap:12px;padding:9px 0;border-bottom:1px dashed var(--bd)}
+.step:last-child{border-bottom:0;padding-bottom:0}
+.step:first-child{padding-top:0}
+.dot{
+  width:26px;height:26px;border-radius:9px;display:grid;place-items:center;font-size:12px;font-weight:800;
+  background:var(--c2);border:1px solid var(--bd);color:var(--mu);margin-top:2px;
+}
+.step[data-status="ok"] .dot{background:var(--ok-soft);border-color:var(--ok-bd);color:var(--ok)}
+.step[data-status="fail"] .dot{background:var(--dg-soft);border-color:var(--dg-bd);color:var(--dg)}
+.step[data-status="skip"] .dot{background:var(--wn-soft);border-color:var(--wn-bd);color:var(--wn)}
+.step-name{font-size:13px;font-weight:700}
+.step-detail{font-size:11.5px;color:var(--mu);word-break:break-word;margin-top:1px}
+.step[data-status="fail"] .step-detail{color:var(--dg)}
+
+/* ---------------------------------------------------------------- details */
+.details-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:10px;margin:0;padding:0}
+.detail{background:var(--c2);border:1px solid var(--bd);border-radius:12px;padding:9px 12px;min-width:0}
+.detail dt{font-size:10.5px;font-weight:700;color:var(--mu);letter-spacing:.3px}
+.detail dd{
+  margin:2px 0 0;font-size:12.5px;font-weight:600;direction:ltr;text-align:left;
+  word-break:break-all;font-family:var(--mono);color:var(--tx);
+}
+html[dir="rtl"] .detail dd{text-align:right}
+
+/* ------------------------------------------------------------------ cards */
+.warn{border-color:var(--wn-bd);background:linear-gradient(180deg,var(--wn-soft),var(--card))}
+.error{border-color:var(--dg-bd);background:linear-gradient(180deg,var(--dg-soft),var(--card))}
+.warn-list,.error-list{margin:0;padding-inline-start:18px;font-size:12.5px;line-height:1.9;color:var(--tx2)}
+.error code{
+  font-family:var(--mono);font-size:12px;background:#fff;border:1px solid var(--dg-bd);
+  border-radius:7px;padding:1px 6px;color:var(--dg);direction:ltr;display:inline-block;
+}
+.error-hint{margin-top:10px;font-size:12.5px;color:var(--tx2);background:#fff;border:1px dashed var(--dg-bd);border-radius:10px;padding:10px 12px}
+.next-list{margin:0;padding-inline-start:18px;font-size:12.5px;line-height:2;color:var(--tx2)}
+
+/* ----------------------------------------------------------------- footer */
+.foot{
+  margin-top:22px;display:flex;align-items:center;justify-content:space-between;gap:12px;
+  font-size:11.5px;color:var(--mu);flex-wrap:wrap;
+}
+.foot a{color:var(--tx2);text-decoration:none;font-weight:700}
+.foot a:hover{color:var(--ac)}
+.foot .links{display:flex;gap:14px}
+
+/* ------------------------------------------------------------------ toast */
+.toast{
+  position:fixed;left:50%;bottom:22px;transform:translate(-50%,16px);opacity:0;pointer-events:none;
+  background:#101622;color:#fff;font-size:12.5px;font-weight:700;padding:10px 16px;border-radius:12px;
+  box-shadow:0 14px 34px rgba(16,22,34,.28);transition:.2s;z-index:50;
+}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+
+@media (max-width:820px){
+  .grid2{grid-template-columns:1fr}
+  h1{font-size:22px}
+  .hero{padding:26px 20px 22px}
+  .card{padding:20px}
+}
+@media (max-width:520px){
+  .wrap{padding:18px 13px 44px}
+  .status-ico{width:54px;height:54px;border-radius:16px}
+  .qr-card{flex-direction:column;align-items:flex-start;gap:16px}
+  .actions .btn{flex:1}
+}
+@media print{
+  body{background:#fff}
+  body::before,body::after,.lang,.actions,.toast{display:none!important}
+  .card{box-shadow:none;break-inside:avoid}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="topbar">
+    <div class="brand">
+      <span class="lg" id="brandLogo" aria-hidden="true">@@NOVA_LOGO_SVG@@</span>
+      <span class="bt">
+        <strong>Nova Worker <span class="badge">INSTALLER</span></strong>
+        <small data-i18n="brandSub">نصب‌کنندهٔ خودکار</small>
+      </span>
+    </div>
+    <div class="lang" role="group" aria-label="Language">
+      <button type="button" data-lang-btn="fa">فا</button>
+      <button type="button" data-lang-btn="en">EN</button>
+      <button type="button" data-lang-btn="ru">RU</button>
+    </div>
+  </header>
+
+  <section class="card hero">
+    <div class="hero-top">
+      <div class="status-ico" id="statusIcon" aria-hidden="true"></div>
+      <div style="min-width:0">
+        <div class="eyebrow" id="eyebrow"></div>
+        <h1 id="title"></h1>
+        <p class="sub" id="subtitle"></p>
+      </div>
+    </div>
+    <div class="chips" id="chips"></div>
+  </section>
+
+  <div class="grid2" id="credentials">
+    <article class="card cred">
+      <div class="label">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11 4.93"/><path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07L13 19.07"/></svg>
+        <span data-i18n="loginLabel">ورود به پنل</span>
+      </div>
+      <div class="urlbox">
+        <a id="loginUrl" href="#" target="_blank" rel="noopener noreferrer">-</a>
+        <button class="btn btn-icon" type="button" data-copy-el="loginUrl" aria-label="copy">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+        </button>
+      </div>
+      <p class="hint" data-i18n="loginHint">این آدرس را ذخیره کن؛ درگاه ورود به پنل مدیریت است.</p>
+      <div class="actions">
+        <a class="btn btn-primary" id="openLogin" href="#" target="_blank" rel="noopener noreferrer">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+          <span data-i18n="open">باز کردن</span>
+        </a>
+        <a class="btn" id="openAdmin" href="#" target="_blank" rel="noopener noreferrer">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+          <span data-i18n="adminBtn">پنل مدیریت</span>
+        </a>
+      </div>
+    </article>
+
+    <article class="card cred">
+      <div class="label">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        <span data-i18n="passLabel">رمز مدیریت</span>
+      </div>
+      <div class="secret">
+        <input id="password" type="password" readonly autocomplete="off" spellcheck="false" aria-label="password" />
+        <button class="btn btn-icon" type="button" id="revealBtn" aria-label="show">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+        <button class="btn btn-icon" type="button" data-copy-el="password" aria-label="copy">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+        </button>
+      </div>
+      <p class="hint" data-i18n="passHint">رمز را در جای امن نگه دار؛ با همین رمز وارد پنل می‌شوی.</p>
+      <p class="hint" style="color:var(--wn)" data-i18n="security">این صفحه حاوی رمز است؛ آن را خصوصی نگه دار و منتشر نکن.</p>
+    </article>
+  </div>
+
+  <article class="card qr-card" id="qrCard">
+    <div class="qr-box" id="qrBox" aria-label="QR"></div>
+    <div class="qr-copy">
+      <h2 style="margin-bottom:6px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM19 19h2v2h-2z"/></svg>
+        <span data-i18n="qrTitle">ورود سریع با QR</span>
+      </h2>
+      <p class="hint" style="margin-top:0" data-i18n="qrHint">با دوربین گوشی اسکن کن تا صفحهٔ ورود باز شود.</p>
+      <div class="label" style="margin-top:14px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11 4.93"/><path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07L13 19.07"/></svg>
+        <span data-i18n="subLabel">لینک اشتراک</span>
+      </div>
+      <div class="urlbox">
+        <a id="subUrl" href="#" target="_blank" rel="noopener noreferrer">-</a>
+        <button class="btn btn-icon" type="button" data-copy-el="subUrl" aria-label="copy">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+        </button>
+      </div>
+      <p class="hint" data-i18n="subHint">این لینک را در کلاینت (Clash، Sing-box، v2rayN) وارد کن.</p>
+    </div>
+  </article>
+
+  <article class="card">
+    <h2>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      <span data-i18n="stepsTitle">گام‌های نصب</span>
+      <span class="count" id="stepsCount"></span>
+    </h2>
+    <ol class="steps" id="stepsList"></ol>
+  </article>
+
+  <article class="card error" id="errorCard" hidden>
+    <h2>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color:var(--dg)"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>
+      <span data-i18n="errorTitle">خطا</span>
+    </h2>
+    <p style="margin:0 0 8px" id="errorMessage"></p>
+    <p class="error-hint" id="errorHint" hidden></p>
+  </article>
+
+  <article class="card">
+    <h2>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>
+      <span data-i18n="detailsTitle">جزئیات نصب</span>
+    </h2>
+    <dl class="details-list" id="detailsList"></dl>
+  </article>
+
+  <article class="card warn" id="warnCard" hidden>
+    <h2>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color:var(--wn)"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg>
+      <span data-i18n="warnTitle">هشدارها</span>
+    </h2>
+    <ul class="warn-list" id="warnList"></ul>
+  </article>
+
+  <article class="card" id="nextCard">
+    <h2>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+      <span data-i18n="nextTitle">قدم بعدی</span>
+    </h2>
+    <ul class="next-list" id="nextList"></ul>
+  </article>
+
+  <footer class="foot">
+    <span data-i18n="footer">Nova Worker · نصب خودکار با GitHub Actions</span>
+    <span class="links">
+      <a href="https://nova-panel.github.io" target="_blank" rel="noopener noreferrer">Panel</a>
+      <a href="https://github.com/Nova-Panel/nova-panel.github.io" target="_blank" rel="noopener noreferrer">GitHub</a>
+      <a href="https://github.com/IRNova/NovaWorker" target="_blank" rel="noopener noreferrer">Worker</a>
+    </span>
+  </footer>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>@@NOVA_QR_LIB@@</script>
+<script>const DATA = @@NOVA_DATA@@;</script>
+<script>
+(function () {
+  "use strict";
+
+  var STEP_NAMES = {
+    fa: { auth: "اتصال به کلودفلر", account: "انتخاب حساب", kv: "ساخت فضای KV", source: "خواندن سورس Worker", upload: "آپلود Worker", config: "تنظیم رمز و کانفیگ", subdomain: "فعال‌سازی workers.dev", verify: "راستی‌آزمایی نصب", render: "ساخت گزارش" },
+    en: { auth: "Connecting to Cloudflare", account: "Selecting account", kv: "Creating KV namespace", source: "Loading Worker source", upload: "Uploading Worker", config: "Writing config and password", subdomain: "Enabling workers.dev", verify: "Verifying deployment", render: "Rendering report" },
+    ru: { auth: "Подключение к Cloudflare", account: "Выбор аккаунта", kv: "Создание хранилища KV", source: "Загрузка исходника Worker", upload: "Загрузка Worker", config: "Запись конфигурации и пароля", subdomain: "Включение workers.dev", verify: "Проверка развёртывания", render: "Формирование отчёта" }
+  };
+
+  var I18N = {
+    fa: {
+      docTitle: "Nova Worker — نصب‌کننده", brandSub: "نصب‌کنندهٔ خودکار",
+      eyebrowOk: "نصب کامل شد", eyebrowFail: "نصب ناموفق",
+      titleOk: "Nova Worker آماده است", titleFail: "نصب کامل نشد",
+      subOk: "ورکر روی کلودفلر نصب شد، فضای KV ساخته و رمز مدیریت تنظیم شد. از آدرس زیر وارد شو.",
+      subFail: "فرایند نصب در یکی از گام‌ها متوقف شد. پیام خطا و گام‌های زیر را ببین.",
+      loginLabel: "ورود به پنل", loginHint: "این آدرس را ذخیره کن؛ درگاه ورود به پنل مدیریت است.",
+      passLabel: "رمز مدیریت", passHint: "رمز را در جای امن نگه دار؛ با همین رمز وارد پنل می‌شوی.",
+      security: "این صفحه حاوی رمز است؛ آن را خصوصی نگه دار و منتشر نکن.",
+      open: "باز کردن", adminBtn: "پنل مدیریت", show: "نمایش", hide: "پنهان",
+      qrTitle: "ورود سریع با QR", qrHint: "با دوربین گوشی اسکن کن تا صفحهٔ ورود باز شود.",
+      subLabel: "لینک اشتراک", subHint: "این لینک را در کلاینت (Clash، Sing-box، v2rayN) وارد کن.",
+      stepsTitle: "گام‌های نصب", detailsTitle: "جزئیات نصب", errorTitle: "خطا", warnTitle: "هشدارها", nextTitle: "قدم بعدی",
+      next1: "از «تنظیمات شبکه» پروتکل و مسیر اتصال را بررسی کن.",
+      next2: "برای اتصال کلاینت‌ها، از بخش «لینک‌ها» لینک یا QR بگیر.",
+      next3: "برای گزارش‌های تلگرام، Bot Token و Chat ID را در تنظیمات پنل وارد کن.",
+      copied: "کپی شد", copyFail: "کپی نشد؛ دستی انتخاب کن.",
+      footer: "Nova Worker · نصب خودکار با GitHub Actions",
+      labels: { worker: "نام Worker", version: "نسخهٔ Worker", build: "بیلد", source: "منبع سورس", account: "حساب کلادفلر", accountId: "شناسهٔ حساب", kv: "فضای KV", kvId: "شناسهٔ KV", sub: "لینک اشتراک", uuid: "UUID", panel: "آدرس پنل", deployed: "زمان نصب", duration: "مدت اجرا", sha: "هش سورس", compat: "تاریخ سازگاری" },
+      status: { ok: "موفق", fail: "ناموفق", skip: "رد شد", running: "در حال اجرا", pending: "در انتظار" }
+    },
+    en: {
+      docTitle: "Nova Worker — Installer", brandSub: "Automatic installer",
+      eyebrowOk: "Installation complete", eyebrowFail: "Installation failed",
+      titleOk: "Nova Worker is ready", titleFail: "Installation did not finish",
+      subOk: "The Worker is deployed on Cloudflare, KV storage is bound and the admin password is set. Sign in below.",
+      subFail: "The installer stopped at one of the steps. Review the error and the steps below.",
+      loginLabel: "Sign in to the panel", loginHint: "Save this address — it is the entrance to the admin panel.",
+      passLabel: "Admin password", passHint: "Keep this password safe. It is the only way into the panel.",
+      security: "This page contains a password. Keep it private and never publish it.",
+      open: "Open", adminBtn: "Admin panel", show: "Show", hide: "Hide",
+      qrTitle: "Quick sign-in", qrHint: "Scan with your phone camera to open the login page.",
+      subLabel: "Subscription link", subHint: "Paste this link into your client (Clash, Sing-box, v2rayN).",
+      stepsTitle: "Installation steps", detailsTitle: "Installation details", errorTitle: "Error", warnTitle: "Warnings", nextTitle: "Next steps",
+      next1: "Review the protocol and path in Network settings.",
+      next2: "Grab a node link or QR from the Links page for your clients.",
+      next3: "For Telegram reports, add the Bot Token and Chat ID in panel settings.",
+      copied: "Copied", copyFail: "Could not copy — select it manually.",
+      footer: "Nova Worker · automated install with GitHub Actions",
+      labels: { worker: "Worker name", version: "Worker version", build: "Build", source: "Source", account: "Cloudflare account", accountId: "Account ID", kv: "KV namespace", kvId: "KV ID", sub: "Subscription link", uuid: "UUID", panel: "Panel URL", deployed: "Installed at", duration: "Duration", sha: "Source hash", compat: "Compatibility date" },
+      status: { ok: "Done", fail: "Failed", skip: "Skipped", running: "Running", pending: "Pending" }
+    },
+    ru: {
+      docTitle: "Nova Worker — Установщик", brandSub: "Автоматический установщик",
+      eyebrowOk: "Установка завершена", eyebrowFail: "Установка не удалась",
+      titleOk: "Nova Worker готов", titleFail: "Установка не завершена",
+      subOk: "Worker развёрнут в Cloudflare, хранилище KV подключено, пароль администратора задан. Войдите ниже.",
+      subFail: "Установщик остановился на одном из шагов. Проверьте ошибку и шаги ниже.",
+      loginLabel: "Вход в панель", loginHint: "Сохраните этот адрес — это вход в панель управления.",
+      passLabel: "Пароль администратора", passHint: "Храните пароль в надёжном месте. Это единственный вход в панель.",
+      security: "На этой странице есть пароль. Держите её в тайне.",
+      open: "Открыть", adminBtn: "Панель", show: "Показать", hide: "Скрыть",
+      qrTitle: "Быстрый вход", qrHint: "Отсканируйте камерой телефона, чтобы открыть страницу входа.",
+      subLabel: "Ссылка подписки", subHint: "Вставьте ссылку в клиент (Clash, Sing-box, v2rayN).",
+      stepsTitle: "Шаги установки", detailsTitle: "Детали установки", errorTitle: "Ошибка", warnTitle: "Предупреждения", nextTitle: "Что дальше",
+      next1: "Проверьте протокол и путь в настройках сети.",
+      next2: "Возьмите ссылку или QR на странице ссылок для клиентов.",
+      next3: "Для отчётов в Telegram укажите Bot Token и Chat ID в настройках панели.",
+      copied: "Скопировано", copyFail: "Не удалось скопировать — выделите вручную.",
+      footer: "Nova Worker · автоматическая установка через GitHub Actions",
+      labels: { worker: "Имя Worker", version: "Версия Worker", build: "Сборка", source: "Источник", account: "Аккаунт Cloudflare", accountId: "ID аккаунта", kv: "Хранилище KV", kvId: "ID KV", sub: "Ссылка подписки", uuid: "UUID", panel: "Панель", deployed: "Время установки", duration: "Длительность", sha: "Хеш исходника", compat: "Дата совместимости" },
+      status: { ok: "Готово", fail: "Ошибка", skip: "Пропущен", running: "Выполняется", pending: "Ожидание" }
+    }
+  };
+
+  var $ = function (id) { return document.getElementById(id); };
+  var lang = "fa";
+  try {
+    var saved = localStorage.getItem("nova-install-lang");
+    if (saved && I18N[saved]) lang = saved;
+  } catch (e) {}
+
+  var locales = { fa: "fa-IR", en: "en-GB", ru: "ru-RU" };
+
+  function t(key) {
+    var parts = String(key).split(".");
+    var read = function (root) {
+      var node = root;
+      for (var i = 0; i < parts.length; i += 1) {
+        if (!node) return undefined;
+        node = node[parts[i]];
+      }
+      return node;
+    };
+    var value = read(I18N[lang]);
+    if (value === undefined) value = read(I18N.fa);
+    return value === undefined ? "" : value;
+  }
+  function statusLabel(status) { return (I18N[lang].status[status]) || status; }
+  function stepName(step) { return (STEP_NAMES[lang] && STEP_NAMES[lang][step.id]) || step.title || step.id; }
+
+  function makeEl(tag, className, text) {
+    var node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined && text !== null) node.textContent = text;
+    return node;
+  }
+
+  function formatDate(iso) {
+    var date = new Date(iso);
+    if (isNaN(date.getTime())) return iso || "-";
+    try {
+      return date.toLocaleString(locales[lang] || "fa-IR", { dateStyle: "medium", timeStyle: "short" });
+    } catch (e) {
+      return date.toISOString().replace("T", " ").slice(0, 16);
+    }
+  }
+
+  function toast(message) {
+    var node = $("toast");
+    node.textContent = message;
+    node.classList.add("show");
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(function () { node.classList.remove("show"); }, 1800);
+  }
+
+  function copyText(text) {
+    var value = String(text || "");
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(value).then(function () { toast(t("copied")); }).catch(function () { fallbackCopy(value); });
+    }
+    return Promise.resolve(fallbackCopy(value));
+  }
+
+  function fallbackCopy(value) {
+    var area = document.createElement("textarea");
+    area.value = value;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    var ok = false;
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    document.body.removeChild(area);
+    toast(ok ? t("copied") : t("copyFail"));
+    return ok;
+  }
+
+  function setStatusIcon(ok) {
+    var box = $("statusIcon");
+    box.innerHTML = "";
+    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "2.2");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    if (ok) {
+      var circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      circle.setAttribute("cx", "12"); circle.setAttribute("cy", "12"); circle.setAttribute("r", "9");
+      var path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", "m8 12 2.6 2.6L16 9");
+      svg.appendChild(circle); svg.appendChild(path);
+    } else {
+      var c2 = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      c2.setAttribute("cx", "12"); c2.setAttribute("cy", "12"); c2.setAttribute("r", "9");
+      var p2 = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      p2.setAttribute("d", "M12 8v4M12 16h.01");
+      svg.appendChild(c2); svg.appendChild(p2);
+    }
+    box.appendChild(svg);
+  }
+
+  function renderChips(data) {
+    var chips = $("chips");
+    chips.innerHTML = "";
+    var items = [];
+    items.push({ dot: true, text: data.worker.name });
+    if (data.worker.version) items.push({ text: data.worker.version });
+    items.push({ text: formatDate(data.generatedAt) });
+    items.forEach(function (item) {
+      var chip = makeEl("span", "chip");
+      if (item.dot) chip.appendChild(makeEl("span", "dotmark"));
+      if (item.dot) chip.appendChild(makeEl("b", "", item.text));
+      else chip.textContent = item.text;
+      chips.appendChild(chip);
+    });
+  }
+
+  function renderSteps(data) {
+    var list = $("stepsList");
+    list.innerHTML = "";
+    data.steps.forEach(function (step) {
+      var item = makeEl("li", "step");
+      item.setAttribute("data-status", step.status || "pending");
+      var dot = makeEl("span", "dot", step.status === "ok" ? "✓" : step.status === "fail" ? "✕" : step.status === "skip" ? "–" : "·");
+      var body = makeEl("div");
+      body.appendChild(makeEl("div", "step-name", stepName(step)));
+      var meta = step.detail ? step.detail : statusLabel(step.status);
+      body.appendChild(makeEl("div", "step-detail", meta));
+      item.appendChild(dot); item.appendChild(body);
+      list.appendChild(item);
+    });
+    $("stepsCount").textContent = data.steps.filter(function (s) { return s.status === "ok"; }).length + " / " + data.steps.length;
+  }
+
+  function detailRow(label, value) {
+    var box = makeEl("div", "detail");
+    box.appendChild(makeEl("dt", "", label));
+    box.appendChild(makeEl("dd", "", value));
+    return box;
+  }
+
+  function renderDetails(data) {
+    var list = $("detailsList");
+    list.innerHTML = "";
+    var L = I18N[lang].labels;
+    var rows = [
+      [L.worker, data.worker.name],
+      [L.version, data.worker.version || "-"],
+      [L.build, data.worker.build || "-"],
+      [L.source, data.worker.file || "-"],
+      [L.account, data.account.name || "-"],
+      [L.accountId, data.account.id || "-"],
+      [L.kv, data.kv.title || "-"],
+      [L.kvId, data.kv.id || "-"],
+      [L.uuid, data.credentials.userID || "-"],
+      [L.sub, data.urls.sub || "-"],
+      [L.panel, data.urls.panel || "-"],
+      [L.deployed, formatDate(data.generatedAt)],
+      [L.duration, (data.durationMs / 1000).toFixed(1) + "s"],
+      [L.sha, (data.worker.sha256 || "").slice(0, 16) || "-"],
+      [L.compat, data.worker.compatibilityDate || "-"]
+    ];
+    rows.forEach(function (row) { list.appendChild(detailRow(row[0], row[1])); });
+  }
+
+  function secureText(text) { return String(text || ""); }
+
+  function render(data) {
+    document.documentElement.setAttribute("data-status", data.ok ? "success" : "failed");
+    document.documentElement.lang = lang;
+    document.documentElement.dir = lang === "fa" ? "rtl" : "ltr";
+    document.title = t("docTitle");
+
+    document.querySelectorAll("[data-lang-btn]").forEach(function (btn) {
+      btn.classList.toggle("on", btn.getAttribute("data-lang-btn") === lang);
+    });
+    document.querySelectorAll("[data-i18n]").forEach(function (node) {
+      var key = node.getAttribute("data-i18n");
+      var value = t(key);
+      if (value) node.textContent = value;
+    });
+
+    setStatusIcon(data.ok);
+    $("eyebrow").textContent = data.ok ? t("eyebrowOk") : t("eyebrowFail");
+    $("title").textContent = data.ok ? t("titleOk") : t("titleFail");
+    $("subtitle").textContent = data.ok ? t("subOk") : t("subFail");
+    renderChips(data);
+
+    var login = secureText(data.urls.login);
+    var admin = secureText(data.urls.admin);
+    var sub = secureText(data.urls.sub);
+    $("loginUrl").textContent = login || "-";
+    $("loginUrl").href = login || "#";
+    $("openLogin").href = login || "#";
+    $("openAdmin").href = admin || login || "#";
+    $("subUrl").textContent = sub || "-";
+    $("subUrl").href = sub || "#";
+    $("password").value = secureText(data.credentials.password);
+
+    $("credentials").hidden = !data.ok;
+    $("qrCard").hidden = !data.ok;
+    $("nextCard").hidden = !data.ok;
+    $("errorCard").hidden = !!data.ok;
+    if (!data.ok) {
+      $("errorMessage").textContent = (data.error && data.error.message) || "-";
+      var hint = data.error && data.error.hint;
+      $("errorHint").hidden = !hint;
+      $("errorHint").textContent = hint || "";
+    }
+
+    $("warnCard").hidden = !(data.warnings && data.warnings.length);
+    var warnList = $("warnList");
+    warnList.innerHTML = "";
+    (data.warnings || []).forEach(function (warning) {
+      warnList.appendChild(makeEl("li", "", warning));
+    });
+
+    var nextList = $("nextList");
+    nextList.innerHTML = "";
+    [t("next1"), t("next2"), t("next3")].forEach(function (item) { nextList.appendChild(makeEl("li", "", item)); });
+
+    renderSteps(data);
+    renderDetails(data);
+    renderQR(data);
+  }
+
+  function renderQR(data) {
+    var box = $("qrBox");
+    box.innerHTML = "";
+    if (!data.ok || typeof QRCode === "undefined" || !data.urls.login) {
+      box.textContent = "—";
+      return;
+    }
+    try {
+      new QRCode(box, {
+        text: data.urls.login,
+        width: 320,
+        height: 320,
+        colorDark: "#101622",
+        colorLight: "#ffffff",
+        correctLevel: QRCode.CorrectLevel.M
+      });
+    } catch (e) {
+      box.textContent = "—";
+    }
+  }
+
+  document.querySelectorAll("[data-lang-btn]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var next = btn.getAttribute("data-lang-btn");
+      if (!I18N[next] || next === lang) return;
+      lang = next;
+      try { localStorage.setItem("nova-install-lang", lang); } catch (e) {}
+      render(DATA);
+    });
+  });
+
+  document.addEventListener("click", function (event) {
+    var copyBtn = event.target.closest("[data-copy-el]");
+    if (copyBtn) {
+      var target = $(copyBtn.getAttribute("data-copy-el"));
+      if (!target) return;
+      copyText(target.value !== undefined ? target.value : target.textContent);
+      return;
+    }
+    var reveal = event.target.closest("#revealBtn");
+    if (reveal) {
+      var input = $("password");
+      var shown = input.type === "text";
+      input.type = shown ? "password" : "text";
+      reveal.setAttribute("aria-label", shown ? t("show") : t("hide"));
+    }
+  });
+
+  render(DATA);
+})();
+</script>
+</body>
+</html>
