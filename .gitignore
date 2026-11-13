@@ -1,0 +1,9 @@
+# NovaInstall runtime artifacts
+out/
+preview/
+
+# Local editor / OS noise
+.DS_Store
+Thumbs.db
+*.log
+node_modules/
