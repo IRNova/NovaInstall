@@ -325,6 +325,7 @@ html[dir="rtl"] .detail dd{text-align:right}
       errorTitle: "خطا", retry: "تلاش دوباره", copied: "کپی شد", footer: "Nova Worker · نصب آسان",
       again: "نصب روی حساب دیگر",
       emptyToken: "توکن API را وارد کن.", tokenInvalid: "توکن معتبر نیست یا دسترسی لازم را ندارد.",
+      authInvalid: "توکن نامعتبر است یا منقضی شده؛ یک توکن جدید با دسترسی Workers Scripts:Edit و Workers KV Storage:Edit بساز.",
       multiAccountBody: "این توکن به چند حساب دسترسی دارد؛ حسابی که می‌خواهی نصب روی آن انجام شود را انتخاب کن.",
       resume: "ادامه نصب", done: "نصب با موفقیت انجام شد.", verifyPending: "Worker نصب شد اما هنوز لبه پاسخ نمی‌دهد؛ چند دقیقه بعد آدرس ورود را باز کن.",
       details: { worker: "نام Worker", version: "نسخه", build: "بیلد", account: "حساب", kv: "فضای KV", source: "منبع سورس" },
@@ -358,6 +359,7 @@ html[dir="rtl"] .detail dd{text-align:right}
       errorTitle: "Error", retry: "Try again", copied: "Copied", footer: "Nova Worker · easy install",
       again: "Install another account",
       emptyToken: "Enter your API token.", tokenInvalid: "The token is invalid or lacks permissions.",
+      authInvalid: "The token is invalid or expired; create a new one with Workers Scripts:Edit and Workers KV Storage:Edit.",
       multiAccountBody: "This token can access several accounts; choose the one to install into.",
       resume: "Continue install", done: "Installed successfully.", verifyPending: "The Worker is deployed but the edge is not answering yet; open the login URL in a minute.",
       details: { worker: "Worker", version: "Version", build: "Build", account: "Account", kv: "KV namespace", source: "Source" },
@@ -391,6 +393,7 @@ html[dir="rtl"] .detail dd{text-align:right}
       errorTitle: "Ошибка", retry: "Повторить", copied: "Скопировано", footer: "Nova Worker · простая установка",
       again: "Установить в другой аккаунт",
       emptyToken: "Введите API-токен.", tokenInvalid: "Токен недействителен или без нужных прав.",
+      authInvalid: "Токен недействителен или истёк; создайте новый с правами Workers Scripts:Edit и Workers KV Storage:Edit.",
       multiAccountBody: "У токена несколько аккаунтов; выберите нужный.",
       resume: "Продолжить", done: "Установка выполнена.", verifyPending: "Worker развёрнут, но edge пока не отвечает; откройте адрес через минуту.",
       details: { worker: "Worker", version: "Версия", build: "Сборка", account: "Аккаунт", kv: "KV", source: "Источник" },
@@ -569,6 +572,9 @@ html[dir="rtl"] .detail dd{text-align:right}
     $("errorCard").hidden = false;
     $("errorText").textContent = (error && error.message) || String(error);
     var hint = stepId ? t("errorHints." + stepId) : "";
+    if (stepId === "auth" && error && Array.isArray(error.codes) && error.codes.indexOf(1000) !== -1) {
+      hint = t("authInvalid");
+    }
     $("errorHint").hidden = !hint;
     $("errorHint").textContent = hint || "";
     $("formCard").hidden = false;
@@ -581,6 +587,7 @@ html[dir="rtl"] .detail dd{text-align:right}
     var stepId = STEPS.find(function (id) { return state.steps[id] && state.steps[id].status === "running"; });
     if (stepId) setStep(stepId, "fail", error.message);
     showError(error, stepId);
+    $("progressLabel").textContent = t("errorTitle");
   }
 
   /* ---------------------------------------------------------------- install */
