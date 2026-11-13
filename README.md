@@ -48,12 +48,17 @@
 
 ```
 your-repo/
-├─ NovaInstall/
-│  ├─ scripts/install.mjs           ← منطق نصب
-│  ├─ scripts/lib/                  ← کلاینت API کلودفلر، هویت، رندر
-│  ├─ templates/result.html         ← صفحهٔ نتیجه (UI پنل)
-│  └─ assets/                       ← لوگو، فونت وزیرمتن، QR
-└─ .github/workflows/nova-install.yml
+├─ index.html                  ← صفحهٔ نصب عمومی (GitHub Pages)
+├─ proxy/
+│  ├─ worker.js                ← پروکسی کوچک CORS برای صفحهٔ نصب
+│  └─ wrangler.toml
+├─ scripts/install.mjs         ← نصب از طریق GitHub Actions
+├─ scripts/lib/                ← کلاینت API کلودفلر، هویت، رندر
+├─ templates/result.html       ← صفحهٔ نتیجهٔ Action (UI پنل)
+├─ assets/                     ← لوگو، فونت وزیرمتن، QR
+└─ .github/workflows/
+   ├─ nova-install.yml         ← Action نصب
+   └─ deploy-proxy.yml         ← انتشار پروکسی
 ```
 
 > دیگر لازم نیست `_worker.js` را کنار پوشه بگذاری: نصب‌کننده به‌صورت پیش‌فرض سورس را از
@@ -108,13 +113,76 @@ https://<worker-name>.<account-subdomain>.workers.dev/admin
 
 ---
 
+## صفحهٔ نصب عمومی برای کاربران (بدون GitHub)
+
+فایل `index.html` یک ویزارد نصب کامل است که در مرورگر خودِ کاربر اجرا می‌شود: توکن را می‌گیرد،
+Worker را از GitHub دانلود می‌کند و روی حساب کلودفلر خودِ کاربر نصب می‌کند.
+
+### چرا پروکسی لازم است؟
+
+مرورگرها اجازهٔ فراخوانی مستقیم `api.cloudflare.com` را ندارند (این API هدر CORS برنمی‌گرداند —
+تست شده). به همین دلیل `proxy/worker.js` یک پل کوچک است که:
+
+- فقط مسیرهای `/user`، `/accounts` و `/memberships` را به کلودفلر پاس می‌دهد،
+- توکن و بدنهٔ درخواست را **ذخیره یا لاگ نمی‌کند** (stateless)،
+- فقط از Originهای مجاز (`ALLOWED_ORIGINS`) درخواست می‌پذیرد،
+- برای بررسی نصب (`/probe`) فقط دامنه‌های `*.workers.dev` را می‌خواند.
+
+### ۱) GitHub Pages را روشن کن
+
+**Settings → Pages → Source: Deploy from a branch → Branch: `main`، پوشه `/ (root)` → Save**
+
+آدرس صفحه: `https://irnova.github.io/NovaInstall/`
+
+### ۲) پروکسی را منتشر کن
+
+- توکنی با دسترسی **Workers Scripts:Edit** بساز (همان توکن نصب کافی است).
+- **Settings → Secrets and variables → Actions**: `CF_API_TOKEN` و (اختیاری) `CF_ACCOUNT_ID` بساز.
+- **Actions → Deploy Installer Proxy → Run workflow**
+- آدرس خروجی شبیه `https://nova-install.<subdomain>.workers.dev` است.
+- اگر دامنهٔ صفحه چیز دیگری است، در `proxy/wrangler.toml` مقدار `ALLOWED_ORIGINS` را عوض کن.
+
+### ۳) آدرس پروکسی از قبل در کد ثابت است
+
+صفحه به‌صورت پیش‌فرض به پروکسی `https://nameless-rain-87c6.altramax083.workers.dev` وصل است
+(در `index.html` هم در `<meta name="nova-proxy">` و هم در `PROXY_URL`). کاربر هیچ آدرسی وارد نمی‌کند.
+
+اگر پروکسی را جای دیگری منتقل کردی، فقط همین دو مقدار را عوض کن. برای تست موقت می‌توانی
+`?api=https://...` هم بدهی.
+
+> **مهم:** پروکسی باید نسخهٔ `1.0.1` یا بالاتر باشد (اصلاح CORS preflight). با باز کردن
+> `https://<proxy>/health` مقدار `"version":"1.0.1"` را ببین. اگر `1.0.0` بود، همان
+> `proxy/worker.js` جدید را دوباره deploy کن؛ وگرنه مرورگر درخواست‌ها را بلاک می‌کند.
+
+### ۴) لینک را به کاربرانت بده
+
+`https://irnova.github.io/NovaInstall/`
+
+کاربر فقط توکن را می‌چسباند و «شروع نصب» را می‌زند. صفحه خودش:
+
+1. توکن را بررسی می‌کند (`/user/tokens/verify`) — اگر نامعتبر بود همان‌جا خطا می‌دهد،
+2. حساب را انتخاب می‌کند (اگر توکن چند حساب داشته باشد، یک لیست کوچک نشان می‌دهد)،
+3. نوار پیشرفت را تا ۱۰۰٪ می‌برد و گام‌ها را زنده نشان می‌دهد،
+4. در پایان **آدرس ورود + رمز مدیریت + QR** را می‌دهد.
+
+نام Worker به‌صورت ثابت `nova-worker` است و رمز به‌صورت خودکار ساخته می‌شود (در نصب دوباره، رمز قبلی حفظ می‌شود تا UUID عوض نشود).
+
+### امنیت صفحهٔ نصب
+
+- توکن فقط در حافظهٔ مرورگر می‌ماند و مستقیم به `api.cloudflare.com` (از طریق پروکسی) می‌رود؛ پروکسی چیزی ذخیره نمی‌کند.
+- بعد از نصب، توکن را از کلودفلر **Revoke** کن.
+- پروکسی را می‌توانی روی حساب خودت منتشر کنی؛ کدش همین‌جاست.
+- اگر نمی‌خواهی مسئولیت پروکسی را بپذیری، از همان GitHub Action برای نصب استفاده کن (بدون سرور).
+
+> همین `index.html` را می‌توانی روی هر هاست استاتیک دیگری هم بگذاری؛ فقط Origin آن را به `ALLOWED_ORIGINS` اضافه کن.
+
+---
+
 ## نصب دوباره و به‌روزرسانی (idempotent)
 
 هر بار اجرای workflow، **آخرین `_worker.js` را از مخزن رسمی دانلود می‌کند**؛ پس برای آپدیت Worker کافی است دوباره Run workflow بزنی. نسخهٔ نصب‌شده (`Version`)، `Build` و هش `SHA-256` سورس در گزارش ثبت می‌شود تا بدانی کدام نسخه روی کلودفلر است.
 
 اگر می‌خواهی روی نسخهٔ خاصی قفل شوی، `worker_source` را به مسیر یا URL همان نسخه بده. برای اجرای محلی/آفلاین، `WORKER_PREFER_LOCAL=1` بگذار تا از کپی موجود در checkout استفاده شود.
-
-نصب دوباره امن است:
 
 اجرای دوبارهٔ workflow امن است:
 
