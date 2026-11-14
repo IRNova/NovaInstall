@@ -476,14 +476,20 @@ async function run() {
     apiKey: config.apiKey,
   });
 
+  let prefetchedAccounts = null;
+
   /* 1. auth ---------------------------------------------------------------- */
   begin("auth");
   if (cf.mode === "token") {
-    const verify = await cf.get("/user/tokens/verify");
-    if (!verify || verify.status !== "active") {
-      throw new Error(`توکن کلودفلر فعال نیست (status: ${verify?.status || "unknown"}).`);
+    // Scoped tokens often lack "User Details: Read", so /user/tokens/verify
+    // answers 401 even when Workers/KV permissions are fine. Listing the
+    // accounts is the reliable check for the permissions this installer uses.
+    const list = await cf.get("/accounts?per_page=50");
+    prefetchedAccounts = Array.isArray(list) ? list : [];
+    if (!prefetchedAccounts.length) {
+      throw new Error("توکن به هیچ حسابی دسترسی ندارد؛ دسترسی Workers را در توکن فعال کن.");
     }
-    ok("auth", "api token · active");
+    ok("auth", "api token · account access");
   } else {
     const user = await cf.get("/user");
     ok("auth", `global key · ${user?.email || "ok"}`);
@@ -494,7 +500,7 @@ async function run() {
   if (config.accountId) {
     account = await cf.get(`/accounts/${config.accountId}`);
   } else {
-    const list = await cf.get("/accounts?per_page=50");
+    const list = prefetchedAccounts || (await cf.get("/accounts?per_page=50"));
     const accounts = Array.isArray(list) ? list : [];
     if (!accounts.length) {
       throw new Error("این توکن به هیچ حسابی دسترسی ندارد؛ دسترسی Workers را در توکن فعال کن.");
