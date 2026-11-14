@@ -1,12 +1,11 @@
 name: Deploy Installer Proxy
 
 # پروکسی صفحهٔ نصب را روی Cloudflare Workers منتشر می‌کند.
-# پیش‌نیاز: در Settings → Secrets and variables → Actions این دو را بساز:
-#   CF_API_TOKEN   (Workers Scripts:Edit)
+# پیش‌نیاز: در Settings → Secrets and variables → Actions این را بساز:
+#   CF_API_TOKEN   (Account → Workers Scripts: Edit)
 #   CF_ACCOUNT_ID  (اختیاری ولی پیشنهادی)
 #
-# بعد از اجرا، آدرس Worker در لاگ‌ها چاپ می‌شود؛ همان را در
-# <meta name="nova-proxy" content="..."> در index.html بگذار.
+# اگر پروکسی را دستی در داشبورد Cloudflare ساخته‌ای، نیازی به اجرای این workflow نیست.
 
 on:
   workflow_dispatch:
@@ -23,9 +22,20 @@ jobs:
     name: Deploy nova-install proxy
     runs-on: ubuntu-latest
     timeout-minutes: 10
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Check Cloudflare secret
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: |
+          if [ -z "$CF_API_TOKEN" ]; then
+            echo "::error title=Missing secret::Add CF_API_TOKEN in Settings → Secrets and variables → Actions (Account → Workers Scripts: Edit)."
+            exit 1
+          fi
+          echo "CF_API_TOKEN is set."
 
       - name: Deploy proxy
         uses: cloudflare/wrangler-action@v3
@@ -34,3 +44,4 @@ jobs:
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
           workingDirectory: proxy
           command: deploy
+          wranglerVersion: "3.90.0"
