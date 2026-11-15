@@ -24,8 +24,7 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;background:radial-grad
 .card h2{margin:0 0 8px;font-size:18px;font-weight:800}
 .card p{margin:0 0 16px;color:var(--tx2);font-size:13.5px}
 label{display:block;font-size:12px;font-weight:700;color:var(--mu);margin:12px 0 6px}
-input,textarea{width:100%;padding:12px 14px;border-radius:12px;border:1px solid var(--bd);font:inherit;background:#fff}
-textarea{min-height:88px;resize:vertical;direction:ltr;text-align:left}
+textarea{width:100%;padding:12px 14px;border-radius:12px;border:1px solid var(--bd);font:inherit;background:#fff;min-height:88px;resize:vertical;direction:ltr;text-align:left}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:12px;padding:12px 18px;font:inherit;font-weight:800;cursor:pointer;text-decoration:none}
 .btn-primary{background:var(--grad);color:#fff;width:100%;margin-top:14px}
 .btn-ghost{background:#f7f9fc;color:var(--tx2);border:1px solid var(--bd)}
@@ -33,7 +32,6 @@ textarea{min-height:88px;resize:vertical;direction:ltr;text-align:left}
 .muted{color:var(--mu);font-size:12px}
 .err{display:none;margin-top:12px;padding:10px 12px;border-radius:12px;background:rgba(229,72,77,.07);border:1px solid rgba(229,72,77,.22);color:var(--dg);font-size:13px;font-weight:700}
 .hidden{display:none!important}
-.progress{margin-top:8px}
 .bar{height:9px;background:#f0f3f8;border-radius:99px;overflow:hidden;margin:10px 0 16px;border:1px solid var(--bd)}
 .bar>i{display:block;height:100%;width:0;background:var(--grad);transition:width .35s}
 .term{background:#0b1220;color:#c8d1e0;border-radius:14px;padding:14px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;max-height:280px;overflow:auto;direction:ltr;text-align:left;line-height:1.55}
@@ -51,7 +49,6 @@ textarea{min-height:88px;resize:vertical;direction:ltr;text-align:left}
       <span><strong>Nova Worker <span class="tag">INSTALL</span></strong><small>نصب‌کنندهٔ خودکار روی Cloudflare</small></span>
     </div>
   </div>
-
   <div id="home" class="grid">
     <section class="card">
       <h2>توکن دارم</h2>
@@ -74,8 +71,7 @@ textarea{min-height:88px;resize:vertical;direction:ltr;text-align:left}
       <p class="muted" style="margin-top:12px">بعد از ساخت، توکن را کپی کن و در کارت کناری بچسبان.</p>
     </section>
   </div>
-
-  <section id="install" class="card hidden progress">
+  <section id="install" class="card hidden">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
       <h2 style="margin:0;font-size:16px">فرایند نصب</h2>
       <span class="muted" id="timer">00:00</span>
@@ -175,6 +171,19 @@ textarea{min-height:88px;resize:vertical;direction:ltr;text-align:left}
             else if(st==="fail"){ log(msg+" ✕","bad"); }
             else { log(msg+" …","run"); pct=Math.min(88,pct+3); }
             setPct(pct);
+          } else if(ev.type==="activate" && ev.url){
+            log("activate edge — helping browser…","run");
+            try {
+              var ar = await fetch(ev.url, {
+                method: "POST",
+                headers: { "x-nova-install": ev.secret || "", "Accept": "application/json" }
+              });
+              var aj = await ar.json().catch(function(){ return {}; });
+              if(ar.ok && aj.ok){ log("activate ok","ok"); pct=Math.min(95,pct+8); setPct(pct); }
+              else log("activate wait — "+(aj.error||ar.status),"run");
+            } catch (ae) {
+              log("activate retry later — "+ae,"run");
+            }
           } else if(ev.type==="error"){
             throw new Error(ev.message||"install_failed");
           } else if(ev.type==="result" && ev.result){
