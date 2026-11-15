@@ -262,7 +262,7 @@ async function resolveAccount(accountId, token, send) {
       const info = await cf(token, "GET", `/accounts/${accountId}`);
       return { id: accountId, name: (info && info.name) || accountId };
     } catch (error) {
-      if (isInvalidToken(error)) throw error;
+      if (isInvalidToken(error) || error.status === 0) throw error;
       // A token with Workers permissions but without Account Settings:Read
       // cannot read the account; the ID is still usable for Workers calls.
       return { id: accountId, name: accountId };
@@ -276,7 +276,7 @@ async function resolveAccount(accountId, token, send) {
     accounts = Array.isArray(list) ? list : [];
   } catch (error) {
     listError = error;
-    if (isInvalidToken(error)) throw error;
+    if (isInvalidToken(error) || error.status === 0) throw error;
   }
 
   if (!accounts.length) {
@@ -287,7 +287,7 @@ async function resolveAccount(accountId, token, send) {
         .filter((item) => item && item.id);
     } catch (error) {
       if (!listError) listError = error;
-      if (isInvalidToken(error)) throw error;
+      if (isInvalidToken(error) || error.status === 0) throw error;
     }
   }
 
@@ -383,7 +383,7 @@ async function uploadWorker(accountId, config, namespaceId, bytes, token) {
 
 async function existingBindings(accountId, workerName, token) {
   try {
-    const info = await cf(token, "GET", `/accounts/${accountId}/workers/scripts/${workerName}/settings`, {
+    const info = await cf(token, "GET", `/accounts/${accountId}/workers/scripts/${workerName}/settings`, undefined, {
       allow404: true,
     });
     const bindings = info && Array.isArray(info.bindings) ? info.bindings : [];
@@ -402,6 +402,7 @@ async function writeInstallRecord(accountId, namespaceId, config, token) {
       token,
       "GET",
       `/accounts/${accountId}/storage/kv/namespaces/${namespaceId}/values/install.json`,
+      undefined,
       { raw: true, allow404: true },
     );
     if (text) {
@@ -446,7 +447,7 @@ async function writeInstallRecord(accountId, namespaceId, config, token) {
 async function enablePublicUrl(accountId, workerName, token) {
   let subdomain = "";
   try {
-    const info = await cf(token, "GET", `/accounts/${accountId}/workers/subdomain`, { allow404: true });
+    const info = await cf(token, "GET", `/accounts/${accountId}/workers/subdomain`, undefined, { allow404: true });
     subdomain = (info && info.subdomain) || "";
   } catch {
     subdomain = "";
@@ -659,7 +660,7 @@ function normalizeConfig(body) {
 function isInvalidToken(error) {
   if (!error) return false;
   if (error.status === 401) return true;
-  return Array.isArray(error.codes) && error.codes.some((code) => code === 1000 || code === 9109 || code === 6003);
+  return Array.isArray(error.codes) && error.codes.some((code) => code === 9109 || code === 6003);
 }
 
 function matchValue(text, regex) {

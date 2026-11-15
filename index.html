@@ -80,6 +80,13 @@ input::placeholder{color:#a7afbf}
 .icon-btn svg{width:18px;height:18px}
 .hint{font-size:11.5px;color:var(--mu);margin:8px 0 0;line-height:1.75}
 .hint.warn{color:var(--wn)}
+.adv{margin-top:12px;border:1px dashed var(--bd2);border-radius:12px;background:var(--c2);padding:10px 12px}
+.adv summary{cursor:pointer;font-size:12px;font-weight:800;color:var(--tx2);list-style:none;display:flex;align-items:center;gap:8px}
+.adv summary::-webkit-details-marker{display:none}
+.adv summary::before{content:"+";display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:6px;background:#fff;border:1px solid var(--bd);color:var(--ac);font-size:13px;line-height:1}
+.adv[open] summary::before{content:"−"}
+.adv .field{margin-top:12px}
+.adv input{margin-top:0}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:1px solid var(--bd);background:var(--card);color:var(--tx2);border-radius:12px;padding:11px 16px;font:inherit;font-size:13px;font-weight:800;cursor:pointer;transition:.14s;text-decoration:none}
 .btn:hover{border-color:var(--bd2);transform:translateY(-1px);box-shadow:0 9px 20px rgba(40,60,110,.10)}
 .btn svg{width:18px;height:18px;flex:0 0 auto}
@@ -189,6 +196,14 @@ html[dir="rtl"] .detail dd{text-align:right}
       </button>
     </div>
     <p class="hint" data-i18n="tokenHint">دسترسی‌های لازم: Workers Scripts:Edit و Workers KV Storage:Edit</p>
+    <details class="adv" id="advBox">
+      <summary data-i18n="advanced">تنظیمات پیشرفته</summary>
+      <div class="field">
+        <label for="accountId" data-i18n="accountIdLabel">شناسهٔ حساب (اختیاری)</label>
+        <input id="accountId" type="text" autocomplete="off" spellcheck="false" maxlength="32" placeholder="0123456789abcdef0123456789abcdef" />
+        <p class="hint" data-i18n="accountIdHint">اگر توکن به چند حساب دسترسی دارد یا فهرست حساب‌ها نمایش داده نمی‌شود، شناسهٔ ۳۲ کاراکتری حساب را اینجا وارد کن.</p>
+      </div>
+    </details>
     <button class="btn btn-primary btn-block" type="button" id="installBtn">
       <span class="spin"></span>
       <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
@@ -297,7 +312,11 @@ html[dir="rtl"] .detail dd{text-align:right}
   var WORKER_NAME = "nova-worker";
   var PANEL_URL = "https://nova-panel.github.io";
   var COMPAT_DATE = "2025-11-04";
+  /* آدرس سورس فقط به پروکسی داده می‌شود؛ مرورگر آن را دانلود نمی‌کند. */
   var WORKER_SOURCE = "https://raw.githubusercontent.com/IRNova/NovaWorker/main/_worker.js";
+  var MIN_PROXY_VERSION = "2.0.0";
+  var PROXY_TIMEOUT = 15000;
+  var INSTALL_TIMEOUT = 240000;
 
   var metaProxy = document.querySelector('meta[name="nova-proxy"]');
   if (metaProxy && metaProxy.content && /^https?:\/\//.test(metaProxy.content)) {
@@ -315,8 +334,18 @@ html[dir="rtl"] .detail dd{text-align:right}
       chipKv: "KV خودکار", chipPanel: "پنل فارسی", chipFree: "بدون هزینه",
       formTitle: "ورود با توکن کلودفلر", tokenLabel: "توکن API کلودفلر", tokenHelp: "ساخت توکن",
       tokenHint: "دسترسی‌های لازم: Workers Scripts:Edit و Workers KV Storage:Edit",
+      advanced: "تنظیمات پیشرفته",
+      accountIdLabel: "شناسهٔ حساب (اختیاری)",
+      accountIdHint: "اگر توکن به چند حساب دسترسی دارد یا فهرست حساب‌ها نمایش داده نمی‌شود، شناسهٔ ۳۲ کاراکتری حساب را اینجا وارد کن.",
+      accountRequired: "حساب مقصد مشخص نیست. شناسهٔ حساب را در تنظیمات پیشرفته وارد کن یا توکنی با دسترسی خواندن حساب بساز.",
+      proxyOutdated: "نسخهٔ پروکسی نصب قدیمی است.",
+      proxyOutdatedHint: "پروکسی باید نسخهٔ 2.0.0 یا بالاتر باشد. پروکسی NovaInstall را یک‌بار دوباره منتشر کن، بعد این صفحه را نوسازی کن.",
+      proxyUnreachable: "پروکسی نصب در دسترس نیست.",
+      proxyUnreachableHint: "اتصال شبکه یا دسترسی به پروکسی را بررسی کن و صفحه را نوسازی کن.",
+      streamClosed: "ارتباط با سرور نصب قطع شد؛ دوباره تلاش کن.",
+      retrying: "اتصال قطع شد؛ تلاش دوباره…",
       installBtn: "شروع نصب",
-      securityNote: "توکن فقط در حافظهٔ همین مرورگر می‌ماند و برای انجام نصب به api.cloudflare.com فرستاده می‌شود؛ ذخیره نمی‌شود و به کسی نمایش داده نمی‌شود. بعد از نصب می‌توانی توکن را Revoke کنی.",
+      securityNote: "توکن فقط در حافظهٔ همین مرورگر می‌ماند و برای انجام نصب از طریق پروکسی رسمی NovaInstall به api.cloudflare.com فرستاده می‌شود؛ ذخیره نمی‌شود و به کسی نمایش داده نمی‌شود. بعد از نصب می‌توانی توکن را Revoke کنی.",
       progressTitle: "فرایند نصب", preparing: "در حال آماده‌سازی…",
       resultTitle: "نصب کامل شد", loginLabel: "آدرس ورود", passLabel: "رمز مدیریت",
       passHint: "این رمز را در جای امن نگه دار؛ تنها راه ورود به پنل است.",
@@ -349,8 +378,18 @@ html[dir="rtl"] .detail dd{text-align:right}
       chipKv: "Automatic KV", chipPanel: "Persian panel", chipFree: "No cost",
       formTitle: "Sign in with a Cloudflare token", tokenLabel: "Cloudflare API token", tokenHelp: "Create token",
       tokenHint: "Required scopes: Workers Scripts:Edit and Workers KV Storage:Edit",
+      advanced: "Advanced settings",
+      accountIdLabel: "Account ID (optional)",
+      accountIdHint: "If the token can access several accounts or the account list is not shown, enter the 32-character account ID.",
+      accountRequired: "The target account is unknown. Enter the account ID under advanced settings or use a token that can read accounts.",
+      proxyOutdated: "The installer proxy is outdated.",
+      proxyOutdatedHint: "The proxy must be version 2.0.0 or newer. Redeploy the NovaInstall proxy once, then reload this page.",
+      proxyUnreachable: "The installer proxy is unreachable.",
+      proxyUnreachableHint: "Check your network connection and reload this page.",
+      streamClosed: "The connection to the installer was interrupted; try again.",
+      retrying: "Connection lost; retrying…",
       installBtn: "Start install",
-      securityNote: "The token stays in this browser and is sent only to api.cloudflare.com to perform the install; it is not stored or shown to anyone. Revoke it after the install.",
+      securityNote: "The token stays in this browser and is sent to api.cloudflare.com through the official NovaInstall proxy to perform the install; it is not stored or shown to anyone. Revoke it after the install.",
       progressTitle: "Installing", preparing: "Preparing…",
       resultTitle: "Installation complete", loginLabel: "Login URL", passLabel: "Admin password",
       passHint: "Keep this password safe; it is the only way into the panel.",
@@ -383,8 +422,18 @@ html[dir="rtl"] .detail dd{text-align:right}
       chipKv: "Авто KV", chipPanel: "Персидская панель", chipFree: "Бесплатно",
       formTitle: "Вход по токену Cloudflare", tokenLabel: "API-токен Cloudflare", tokenHelp: "Создать токен",
       tokenHint: "Нужны права: Workers Scripts:Edit и Workers KV Storage:Edit",
+      advanced: "Дополнительно",
+      accountIdLabel: "ID аккаунта (необязательно)",
+      accountIdHint: "Если токен имеет доступ к нескольким аккаунтам или список не отображается, введите 32-символьный ID аккаунта.",
+      accountRequired: "Целевой аккаунт не определён. Введите ID аккаунта в дополнительных настройках.",
+      proxyOutdated: "Прокси установщика устарел.",
+      proxyOutdatedHint: "Нужна версия прокси 2.0.0 или новее. Разверните прокси NovaInstall заново и обновите страницу.",
+      proxyUnreachable: "Прокси установщика недоступен.",
+      proxyUnreachableHint: "Проверьте соединение и обновите страницу.",
+      streamClosed: "Соединение с установщиком прервано; повторите попытку.",
+      retrying: "Соединение потеряно; повтор…",
       installBtn: "Начать установку",
-      securityNote: "Токен остаётся в этом браузере и отправляется только на api.cloudflare.com; он не сохраняется. После установки отзовите токен.",
+      securityNote: "Токен остаётся в этом браузере и отправляется на api.cloudflare.com через официальный прокси NovaInstall; он не сохраняется. После установки отзовите токен.",
       progressTitle: "Установка", preparing: "Подготовка…",
       resultTitle: "Установка завершена", loginLabel: "Адрес входа", passLabel: "Пароль администратора",
       passHint: "Храните пароль в надёжном месте.",
@@ -416,7 +465,7 @@ html[dir="rtl"] .detail dd{text-align:right}
   var lang = "fa";
   try { var savedLang = localStorage.getItem("nova-install-lang"); if (savedLang && I18N[savedLang]) lang = savedLang; } catch (e) {}
 
-  var state = { busy: false, steps: {}, token: "", accountId: null, result: null };
+  var state = { busy: false, steps: {}, token: "", accountId: null, result: null, proxyVersion: "" };
 
   function t(key) {
     var parts = String(key).split(".");
@@ -426,34 +475,115 @@ html[dir="rtl"] .detail dd{text-align:right}
     return value === undefined ? "" : value;
   }
 
-  function randomInt(max) {
-    var array = new Uint32Array(1);
-    crypto.getRandomValues(array);
-    return array[0] % max;
+  function compareVersion(a, b) {
+    var left = String(a || "").replace(/[^0-9.]/g, "").split(".").map(function (part) { return parseInt(part, 10) || 0; });
+    var right = String(b || "").replace(/[^0-9.]/g, "").split(".").map(function (part) { return parseInt(part, 10) || 0; });
+    var length = Math.max(left.length, right.length);
+    for (var i = 0; i < length; i++) {
+      var l = left[i] || 0;
+      var r = right[i] || 0;
+      if (l > r) return 1;
+      if (l < r) return -1;
+    }
+    return 0;
   }
 
-  function generatePassword(length) {
-    var sets = ["abcdefghijkmnopqrstuvwxyz", "ABCDEFGHJKLMNPQRSTUVWXYZ", "23456789", "-_.@#%+="];
-    var all = sets.join("");
-    var out = sets.map(function (set) { return set[randomInt(set.length)]; });
-    while (out.length < length) out.push(all[randomInt(all.length)]);
-    for (var i = out.length - 1; i > 0; i--) { var j = randomInt(i + 1); var tmp = out[i]; out[i] = out[j]; out[j] = tmp; }
-    return out.join("");
+  function fetchTimeout(url, options, timeout) {
+    options = options || {};
+    var controller = new AbortController();
+    var timer = setTimeout(function () { controller.abort(); }, timeout || 30000);
+    options.signal = controller.signal;
+    return fetch(url, options).then(function (response) {
+      clearTimeout(timer);
+      return response;
+    }, function (error) {
+      clearTimeout(timer);
+      throw error;
+    });
   }
 
-  function randomKey() {
-    var bytes = new Uint8Array(24);
-    crypto.getRandomValues(bytes);
-    var text = "";
-    for (var i = 0; i < bytes.length; i++) text += String.fromCharCode(bytes[i]);
-    return btoa(text).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  function readNdjson(response, onEvent) {
+    if (!response.body || !response.body.getReader) {
+      return response.text().then(function (text) {
+        text.split("\n").forEach(function (line) {
+          line = line.trim();
+          if (!line) return;
+          var event;
+          try { event = JSON.parse(line); } catch (e) { return; }
+          onEvent(event);
+        });
+      });
+    }
+
+    var reader = response.body.getReader();
+    var decoder = new TextDecoder();
+    var buffer = "";
+
+    function drain() {
+      var lines = buffer.split("\n");
+      buffer = lines.pop();
+      lines.forEach(function (line) {
+        line = line.trim();
+        if (!line) return;
+        var event;
+        try { event = JSON.parse(line); } catch (e) { return; }
+        onEvent(event);
+      });
+    }
+
+    function pump() {
+      return reader.read().then(function (chunk) {
+        if (chunk.done) {
+          buffer += decoder.decode();
+          if (buffer.trim()) {
+            try { onEvent(JSON.parse(buffer.trim())); } catch (e) { if (e && e.step) throw e; }
+          }
+          return;
+        }
+        buffer += decoder.decode(chunk.value, { stream: true });
+        drain();
+        return pump();
+      });
+    }
+
+    return pump();
   }
 
-  function randomSlug(length) {
-    var alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
-    var out = "";
-    for (var i = 0; i < length; i++) out += alphabet[randomInt(alphabet.length)];
-    return out;
+  function detectProxy() {
+    return fetchTimeout(PROXY_URL + "/health?_t=" + Date.now(), { cache: "no-store" }, PROXY_TIMEOUT)
+      .catch(function () { throw proxyError(t("proxyUnreachable"), t("proxyUnreachableHint")); })
+      .then(function (response) {
+        if (!response.ok) throw proxyError(t("proxyUnreachable"), t("proxyUnreachableHint"));
+        return response.json();
+      })
+      .then(function (data) {
+        var version = String((data && data.version) || "");
+        state.proxyVersion = version;
+        var install = !(data && data.capabilities && data.capabilities.install === false);
+        return { version: version, install: install, ok: compareVersion(version, MIN_PROXY_VERSION) >= 0 && install };
+      });
+  }
+
+  function proxyError(message, hint) {
+    var error = new Error(message || t("proxyOutdated"));
+    error.hint = hint || (t("proxyOutdatedHint") + (state.proxyVersion ? " (" + state.proxyVersion + ")" : ""));
+    return error;
+  }
+
+  function eventError(event) {
+    var codes = Array.isArray(event.codes) ? event.codes : [];
+    var invalid = codes.indexOf(1000) !== -1 || codes.indexOf(9109) !== -1 || codes.indexOf(6003) !== -1;
+    var message;
+    if (event.needAccountId) message = t("accountRequired");
+    else if (invalid || event.step === "auth") message = t("authInvalid");
+    else message = event.message || t("tokenInvalid");
+
+    var error = new Error(message);
+    error.step = event.step || "auth";
+    error.codes = codes;
+    error.needAccountId = Boolean(event.needAccountId);
+    error.accounts = Array.isArray(event.accounts) ? event.accounts : null;
+    return error;
   }
 
   function toast(message) {
@@ -477,35 +607,6 @@ html[dir="rtl"] .detail dd{text-align:right}
     document.body.appendChild(area); area.select();
     try { document.execCommand("copy"); toast(t("copied")); } catch (e) {}
     document.body.removeChild(area);
-  }
-
-  function api(path, options) {
-    options = options || {};
-    var headers = new Headers(options.headers || {});
-    headers.set("Authorization", "Bearer " + options.token);
-    if (options.body && !(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
-    return fetch(PROXY_URL + "/api" + path, {
-      method: options.method || "GET",
-      headers: headers,
-      body: options.body,
-      cache: "no-store"
-    }).then(function (response) {
-      return response.text().then(function (text) {
-        var data = null;
-        try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }
-        if (options.allow404 && response.status === 404) return null;
-        if (!response.ok || (data && data.success === false)) {
-          var detail = data && data.errors && data.errors.length
-            ? data.errors.map(function (item) { return item.message; }).join("; ")
-            : (text || ("HTTP " + response.status));
-          var error = new Error(detail);
-          error.status = response.status;
-          error.codes = data && data.errors ? data.errors.map(function (item) { return item.code; }) : [];
-          throw error;
-        }
-        return data && Object.prototype.hasOwnProperty.call(data, "result") ? data.result : data;
-      });
-    });
   }
 
   /* ------------------------------------------------------------ progress UI */
@@ -571,13 +672,18 @@ html[dir="rtl"] .detail dd{text-align:right}
     document.documentElement.setAttribute("data-state", "failed");
     $("errorCard").hidden = false;
     $("errorText").textContent = (error && error.message) || String(error);
-    var hint = stepId ? t("errorHints." + stepId) : "";
-    if (stepId === "auth" && error && Array.isArray(error.codes) && error.codes.indexOf(1000) !== -1) {
-      hint = t("authInvalid");
-    }
+    var hint = (error && error.hint) || "";
+    if (!hint && stepId) hint = t("errorHints." + stepId);
+    if (error && error.needAccountId) hint = t("accountIdHint");
     $("errorHint").hidden = !hint;
     $("errorHint").textContent = hint || "";
     $("formCard").hidden = false;
+    if (error && error.needAccountId) {
+      var box = $("advBox");
+      if (box) box.open = true;
+      var input = $("accountId");
+      if (input) { try { input.focus(); } catch (e) {} }
+    }
     setBusy(false);
     var top = $("errorCard").getBoundingClientRect().top + window.scrollY - 20;
     window.scrollTo({ top: top, behavior: "smooth" });
@@ -597,46 +703,45 @@ html[dir="rtl"] .detail dd{text-align:right}
     var token = ($("token").value || "").trim();
     if (!token) { showError(new Error(t("emptyToken"))); return; }
 
+    var manualId = ($("accountId").value || "").trim().toLowerCase();
+    if (manualId && !/^[a-f0-9]{32}$/.test(manualId)) {
+      var idError = new Error(t("accountIdHint"));
+      idError.needAccountId = true;
+      showError(idError);
+      return;
+    }
+
     state.token = token;
-    state.accountId = chosenAccount || null;
+    state.accountId = chosenAccount || manualId || state.accountId || null;
     $("errorCard").hidden = true;
     $("resultCard").hidden = true;
     $("progressCard").hidden = false;
     $("formCard").hidden = true;
+    $("accountPicker").hidden = true;
     document.documentElement.setAttribute("data-state", "working");
     resetSteps();
     setBusy(true);
     $("progressCard").scrollIntoView({ behavior: "smooth", block: "start" });
 
     try {
+      setStep("auth", "running", t("preparing"));
+      var proxy = await detectProxy();
+      if (!proxy.ok) { showError(proxyError()); return; }
       setStep("auth", "running");
-      /* Some scoped tokens do not have "User Details: Read", so /user/tokens/verify
-         returns 401 even when the account permissions are fine. Listing accounts is
-         the reliable check for the permissions this installer needs. */
-      var accounts = await api("/accounts?per_page=50", { token: token });
-      accounts = Array.isArray(accounts) ? accounts : [];
-      if (!accounts.length) throw new Error(t("tokenInvalid"));
-      setStep("auth", "ok", "token · account access");
-
-      setStep("account", "running");
-
-      var account = null;
-      if (state.accountId) account = accounts.find(function (item) { return item.id === state.accountId; }) || null;
-      if (!account && accounts.length === 1) account = accounts[0];
-
-      if (!account) {
-        renderAccounts(accounts);
+      await streamInstall(token, state.accountId);
+    } catch (error) {
+      if (error && error.needAccountId && error.accounts && error.accounts.length) {
+        renderAccounts(error.accounts);
         setStep("account", "running", t("multiAccountBody"));
         $("accountPicker").hidden = false;
-        setBusy(false);
+        $("progressCard").scrollIntoView({ behavior: "smooth", block: "start" });
         return;
       }
-
-      state.accountId = account.id;
-      setStep("account", "ok", account.name + " · " + account.id.slice(0, 8));
-      $("accountPicker").hidden = true;
-      await installRest(account);
-    } catch (error) {
+      if (error && error.needAccountId) {
+        setStep("account", "fail", t("accountRequired"));
+        showError(error, "account");
+        return;
+      }
       failStep(error);
     } finally {
       setBusy(false);
@@ -655,128 +760,79 @@ html[dir="rtl"] .detail dd{text-align:right}
     if (state.accountId) select.value = state.accountId;
   }
 
-  async function installRest(account) {
-    var token = state.token;
-    var kvTitle = WORKER_NAME + "-kv";
-    var namespace = null;
-    var source = "";
-    var sourceVersion = "";
-    var sourceBuild = "";
-    var key = randomKey();
-    var password = generatePassword(20);
-    var existing = null;
-
-    /* KV */
-    setStep("kv", "running");
-    var namespaces = await api("/accounts/" + account.id + "/storage/kv/namespaces?per_page=100", { token: token });
-    namespace = (namespaces || []).find(function (item) { return item.title === kvTitle; }) || null;
-    if (!namespace) {
-      namespace = await api("/accounts/" + account.id + "/storage/kv/namespaces", {
-        token: token, method: "POST", body: JSON.stringify({ title: kvTitle })
-      });
-    }
-    setStep("kv", "ok", kvTitle);
-
-    /* Source: latest from GitHub */
-    setStep("source", "running");
-    var response = await fetch(WORKER_SOURCE + "?_nova=" + Date.now(), { cache: "no-store" });
-    if (!response.ok) throw new Error("GitHub source: HTTP " + response.status);
-    source = await response.text();
-    if (source.indexOf("export default") === -1) throw new Error("Downloaded source is not a Worker.");
-    var versionMatch = source.match(/const\s+Version\s*=\s*['"`]([^'"`]+)['"`]/);
-    sourceVersion = versionMatch ? versionMatch[1] : "";
-    var buildMatch = source.match(/const\s+Build\s*=\s*['"`]([^'"`]+)['"`]/);
-    sourceBuild = buildMatch ? buildMatch[1] : "";
-    var sizeMb = (new Blob([source]).size / 1048576).toFixed(2);
-    setStep("source", "ok", (sourceVersion || "Worker") + " · " + sizeMb + " MB");
-
-    /* Upload */
-    setStep("upload", "running");
-    var metadata = {
-      main_module: "worker.js",
-      compatibility_date: COMPAT_DATE,
-      bindings: [
-        { type: "kv_namespace", name: "KV", namespace_id: namespace.id },
-        { type: "plain_text", name: "PANEL_URL", text: PANEL_URL }
-      ]
-    };
-    var form = new FormData();
-    form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }), "metadata.json");
-    form.append("worker.js", new Blob([source], { type: "application/javascript+module" }), "worker.js");
-    await api("/accounts/" + account.id + "/workers/scripts/" + WORKER_NAME, { token: token, method: "PUT", body: form });
-    setStep("upload", "ok", WORKER_NAME);
-
-    /* Password + KEY (keep them on re-install) */
-    setStep("config", "running");
-    existing = await api("/accounts/" + account.id + "/storage/kv/namespaces/" + namespace.id + "/values/install.json", { token: token, allow404: true });
-    if (existing && typeof existing.ADMIN === "string" && existing.ADMIN) password = existing.ADMIN;
-    if (existing && typeof existing.KEY === "string" && existing.KEY) key = existing.KEY;
-    var record = Object.assign({}, existing || {}, {
-      ADMIN: password,
-      KEY: key,
-      PANEL_URL: PANEL_URL,
-      installedAt: (existing && existing.installedAt) || new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      installer: "NovaInstall-web",
-      installerVersion: "1.1.0"
-    });
-    await api("/accounts/" + account.id + "/storage/kv/namespaces/" + namespace.id + "/values/install.json", {
-      token: token, method: "PUT", body: JSON.stringify(record)
-    });
-    setStep("config", "ok", "install.json · ADMIN · KEY");
-
-    /* Public URL */
-    setStep("subdomain", "running");
-    var subdomain = "";
-    try {
-      var info = await api("/accounts/" + account.id + "/workers/subdomain", { token: token });
-      subdomain = (info && info.subdomain) || "";
-    } catch (e) { subdomain = ""; }
-    if (!subdomain) {
-      subdomain = "nova-" + randomSlug(6);
-      await api("/accounts/" + account.id + "/workers/subdomain", {
-        token: token, method: "PUT", body: JSON.stringify({ subdomain: subdomain })
-      });
-    }
-    await api("/accounts/" + account.id + "/workers/scripts/" + WORKER_NAME + "/subdomain", {
-      token: token, method: "PUT", body: JSON.stringify({ enabled: true })
-    });
-    var publicBase = "https://" + WORKER_NAME + "." + subdomain + ".workers.dev";
-    setStep("subdomain", "ok", publicBase.replace(/^https:\/\//, ""));
-
-    /* Verify through the proxy (the Worker does not send CORS headers) */
-    setStep("verify", "running", "waiting for the edge…");
-    var verified = null;
-    for (var attempt = 1; attempt <= 30; attempt++) {
+  async function streamInstall(token, accountId) {
+    var attempt = 0;
+    while (true) {
+      attempt += 1;
       try {
-        var probeResponse = await fetch(PROXY_URL + "/probe?url=" + encodeURIComponent(publicBase + "/install/status?_t=" + Date.now()), { cache: "no-store" });
-        var probe = await probeResponse.json();
-        if (probe && probe.ok && probe.status === 200 && probe.json && probe.json.kvOk && probe.json.admin) { verified = probe.json; break; }
-      } catch (e) {}
-      await new Promise(function (resolve) { setTimeout(resolve, 3000); });
+        return await streamOnce(token, accountId);
+      } catch (error) {
+        if (error && (error.step || error.fatal)) throw error;
+        if (attempt >= 2) throw error;
+        setStep("auth", "running", t("retrying"));
+        await new Promise(function (resolve) { setTimeout(resolve, 1200); });
+      }
     }
-    if (verified) setStep("verify", "ok", "install/status · kvOk");
-    else setStep("verify", "skip", "edge not ready yet");
+  }
 
-    /* Result */
-    state.result = {
-      worker: WORKER_NAME,
-      account: account.name,
-      accountId: account.id,
-      kv: kvTitle,
-      kvId: namespace.id,
-      source: WORKER_SOURCE,
-      version: sourceVersion,
-      build: sourceBuild || (verified && verified.version) || "",
-      loginUrl: publicBase + "/login",
-      adminUrl: publicBase + "/admin",
-      password: password,
-      verified: Boolean(verified)
+  async function streamOnce(token, accountId) {
+    var payload = {
+      workerName: WORKER_NAME,
+      panelUrl: PANEL_URL,
+      compatibilityDate: COMPAT_DATE,
+      sourceUrl: WORKER_SOURCE
     };
-    renderResult(state.result);
+    if (accountId) payload.accountId = accountId;
+
+    var response;
+    try {
+      response = await fetchTimeout(PROXY_URL + "/install", {
+        method: "POST",
+        headers: {
+          "Authorization": "Bearer " + token,
+          "Content-Type": "application/json",
+          "Accept": "application/x-ndjson"
+        },
+        body: JSON.stringify(payload),
+        cache: "no-store"
+      }, INSTALL_TIMEOUT);
+    } catch (error) {
+      var netError = new Error(t("streamClosed"));
+      netError.cause = error;
+      throw netError;
+    }
+
+    if (!response.ok) {
+      var text = "";
+      try { text = await response.text(); } catch (e) {}
+      var httpError = new Error(text || ("HTTP " + response.status));
+      httpError.status = response.status;
+      httpError.fatal = response.status >= 400 && response.status < 500;
+      throw httpError;
+    }
+
+    var outcome = null;
+    await readNdjson(response, function (event) {
+      if (!event || !event.type) return;
+      if (event.type === "step") {
+        setStep(event.step, event.status, event.detail);
+        return;
+      }
+      if (event.type === "result") {
+        outcome = event.result;
+        return;
+      }
+      if (event.type === "error") throw eventError(event);
+    });
+
+    if (!outcome) throw new Error(t("streamClosed"));
+
+    state.result = outcome;
+    renderResult(outcome);
     $("token").value = "";
     document.documentElement.setAttribute("data-state", "done");
     $("resultCard").scrollIntoView({ behavior: "smooth", block: "start" });
+    return outcome;
   }
 
   /* ----------------------------------------------------------------- result */
