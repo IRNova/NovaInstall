@@ -36,7 +36,7 @@ const INSTALL_DIR = path.resolve(HERE, "..");
 const REPO_ROOT = path.resolve(process.env.GITHUB_WORKSPACE || process.cwd());
 const OUT_DIR = path.resolve(process.env.OUTPUT_DIR || path.join(INSTALL_DIR, "out"));
 const STARTED_AT = Date.now();
-const INSTALLER_VERSION = "1.0.0";
+const INSTALLER_VERSION = "1.1.0";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /* ------------------------------------------------------------------ inputs */
@@ -205,6 +205,9 @@ function hintFor(error) {
     if (error.status === 429) {
       return "کلودفلر درخواست‌ها را محدود کرده است؛ چند دقیقه بعد دوباره اجرا کن.";
     }
+    if (code === 10063 || /subdomain/i.test(message)) {
+      return "حساب کلودفلر هنوز ساب‌دامین workers.dev ندارد و نصب‌کننده نتوانست خودش بسازد. یک بار در داشبورد Cloudflare منوی Workers را باز کن تا ساب‌دامین ساخته شود؛ بعد دوباره اجرا کن.";
+    }
     if (code === 10007) {
       return "منبع پیدا نشد؛ `account_id` و نام Worker را بررسی کن.";
     }
@@ -342,7 +345,8 @@ async function createSubdomain(cf, preferred) {
   const candidates = [];
   if (preferred) candidates.push(preferred);
   for (let i = 0; i < 4; i += 1) {
-    candidates.push(`nova-${Math.random().toString(36).slice(2, 8)}`);
+    // فقط حروف کوچک و عدد؛ مطابق محدودیت‌های workers.dev
+    candidates.push(`nova${Math.random().toString(36).slice(2, 8)}`);
   }
   let lastError = null;
   for (const candidate of candidates) {
@@ -552,6 +556,17 @@ async function run() {
 
   /* 5. Upload ------------------------------------------------------------- */
   begin("upload");
+  // Cloudflare rejects the first script upload on accounts without a
+  // workers.dev subdomain (error 10063), so register it BEFORE uploading.
+  let preparedSubdomain = "";
+  let subdomainPrepareError = null;
+  if (config.enableWorkersDev && !config.customUrl) {
+    try {
+      preparedSubdomain = await ensureSubdomain(cf);
+    } catch (error) {
+      subdomainPrepareError = error;
+    }
+  }
   const preserved = await existingPlainTextBindings(cf);
   const bindings = [
     { type: "kv_namespace", name: "KV", namespace_id: namespace.id },
@@ -580,11 +595,25 @@ async function run() {
     new Blob([worker.source], { type: "application/javascript+module" }),
     "worker.js",
   );
-  await cf.request(
-    "PUT",
-    `/accounts/${account.id}/workers/scripts/${config.workerName}`,
-    { body: form, timeoutMs: 300000 },
-  );
+  try {
+    await cf.request(
+      "PUT",
+      `/accounts/${account.id}/workers/scripts/${config.workerName}`,
+      { body: form, timeoutMs: 300000 },
+    );
+  } catch (error) {
+    const codes = Array.isArray(error?.codes) ? error.codes : [];
+    if (subdomainPrepareError && (codes.includes(10063) || /subdomain/i.test(String(error?.message || "")))) {
+      begin("subdomain");
+      const combined = new Error(
+        `ساب‌دامین workers.dev حساب ساخته نشد: ${subdomainPrepareError.message}`,
+      );
+      combined.hint =
+        "یک بار در داشبورد Cloudflare منوی Workers را باز کن تا ساب‌دامین workers.dev ساخته شود؛ بعد دوباره اجرا کن.";
+      throw combined;
+    }
+    throw error;
+  }
   ok("upload", `${config.workerName} · ${config.compatibilityDate}`);
 
   /* 6. install.json (ADMIN + KEY) ----------------------------------------- */
@@ -635,7 +664,7 @@ async function run() {
   begin("subdomain");
   let publicBase = config.customUrl;
   if (config.enableWorkersDev && !publicBase) {
-    const subdomain = await ensureSubdomain(cf);
+    const subdomain = preparedSubdomain || (await ensureSubdomain(cf));
     await cf.putJson(`/accounts/${account.id}/workers/scripts/${config.workerName}/subdomain`, {
       enabled: true,
     });

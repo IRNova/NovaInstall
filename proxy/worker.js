@@ -5,6 +5,8 @@
  * upload through *.workers.dev is unreliable. This Worker therefore performs
  * the heavy steps itself:
  *   - fetch _worker.js from GitHub (server side, no CORS, no Iran filtering)
+ *   - register the account's workers.dev subdomain BEFORE the first upload
+ *     (Cloudflare rejects uploads on subdomain-less accounts with error 10063)
  *   - upload it to Cloudflare with a known-length multipart body
  *   - create/reuse KV, write install.json, enable workers.dev, verify
  *
@@ -25,7 +27,7 @@
  */
 
 const CF_API = "https://api.cloudflare.com/client/v4";
-const VERSION = "2.0.0";
+const VERSION = "2.0.1";
 const DEFAULT_SOURCE = "https://raw.githubusercontent.com/IRNova/NovaWorker/main/_worker.js";
 const FALLBACK_SOURCE = "https://cdn.jsdelivr.net/gh/IRNova/NovaWorker@main/_worker.js";
 const DEFAULT_PANEL = "https://nova-panel.github.io";
@@ -205,7 +207,33 @@ async function runInstall(config, token, send) {
 
     step = "upload";
     await send({ type: "step", step, status: "running" });
-    await uploadWorker(account.id, config, namespace.id, source.bytes, token);
+    // On accounts that never had a workers.dev subdomain, Cloudflare rejects
+    // the first script upload with error 10063 ("subdomain_required"), so the
+    // subdomain must be registered BEFORE uploading the Worker.
+    let preparedSubdomain = "";
+    let subdomainPrepareError = null;
+    try {
+      preparedSubdomain = await ensureAccountSubdomain(account.id, token);
+    } catch (error) {
+      subdomainPrepareError = error;
+    }
+    try {
+      await uploadWorker(account.id, config, namespace.id, source.bytes, token);
+    } catch (error) {
+      if (
+        subdomainPrepareError &&
+        Array.isArray(error.codes) &&
+        error.codes.indexOf(10063) !== -1
+      ) {
+        const combined = new Error(
+          "workers.dev subdomain is missing and could not be created: " + subdomainPrepareError.message,
+        );
+        combined.step = "subdomain";
+        combined.codes = error.codes;
+        throw combined;
+      }
+      throw error;
+    }
     await send({ type: "step", step, status: "ok", detail: config.workerName });
 
     step = "config";
@@ -215,7 +243,7 @@ async function runInstall(config, token, send) {
 
     step = "subdomain";
     await send({ type: "step", step, status: "running" });
-    const publicBase = await enablePublicUrl(account.id, config.workerName, token);
+    const publicBase = await enablePublicUrl(account.id, config.workerName, token, preparedSubdomain);
     await send({
       type: "step",
       step,
@@ -444,31 +472,48 @@ async function writeInstallRecord(accountId, namespaceId, config, token) {
   return { password, key };
 }
 
-async function enablePublicUrl(accountId, workerName, token) {
-  let subdomain = "";
+/**
+ * Returns the account's workers.dev subdomain, creating one if the account
+ * does not have one yet. Cloudflare rejects the first script upload with
+ * error 10063 when no subdomain exists, so this must run BEFORE the upload.
+ * Subdomains are a global namespace, so a random suffix is retried a few
+ * times. Only lowercase letters and digits are used (valid under every
+ * workers.dev naming rule).
+ */
+async function ensureAccountSubdomain(accountId, token) {
+  let existing = "";
   try {
-    const info = await cf(token, "GET", `/accounts/${accountId}/workers/subdomain`, undefined, { allow404: true });
-    subdomain = (info && info.subdomain) || "";
+    const info = await cf(token, "GET", `/accounts/${accountId}/workers/subdomain`, undefined, {
+      allow404: true,
+    });
+    existing = (info && info.subdomain) || "";
   } catch {
-    subdomain = "";
+    existing = "";
   }
+  if (existing) return existing;
 
-  if (!subdomain) {
-    let lastError = null;
-    for (let attempt = 0; attempt < 4; attempt += 1) {
-      const candidate = "nova-" + randomSlug(6);
-      try {
-        const created = await cf(token, "PUT", `/accounts/${accountId}/workers/subdomain`, {
-          subdomain: candidate,
-        });
-        subdomain = (created && created.subdomain) || candidate;
-        break;
-      } catch (error) {
-        lastError = error;
-      }
+  let lastError = null;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const candidate = "nova" + randomSlug(8);
+    try {
+      const created = await cf(token, "PUT", `/accounts/${accountId}/workers/subdomain`, {
+        subdomain: candidate,
+      });
+      return (created && created.subdomain) || candidate;
+    } catch (error) {
+      lastError = error;
     }
-    if (!subdomain) throw lastError || new Error("subdomain_failed");
   }
+  const error = new Error(
+    "workers.dev subdomain could not be created: " + (lastError ? lastError.message : "unknown error"),
+  );
+  error.step = "subdomain";
+  error.codes = lastError && Array.isArray(lastError.codes) ? lastError.codes : [];
+  throw error;
+}
+
+async function enablePublicUrl(accountId, workerName, token, preparedSubdomain = "") {
+  const subdomain = preparedSubdomain || (await ensureAccountSubdomain(accountId, token));
 
   await cf(token, "PUT", `/accounts/${accountId}/workers/scripts/${workerName}/subdomain`, {
     enabled: true,
