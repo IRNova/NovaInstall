@@ -6,12 +6,13 @@
 <meta name="robots" content="noindex,nofollow"/>
 <title>Nova Worker — نصب آسان</title>
 <link rel="icon" type="image/svg+xml" href="assets/logo-mark.svg"/>
+<link rel="preconnect" href="https://nameless-rain-87c6.altramax083.workers.dev" crossorigin/>
 <style>
-body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:system-ui,-apple-system,sans-serif;background:#f4f6fb;color:#101622}
-.box{text-align:center;padding:28px}
+body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:Tahoma,system-ui,sans-serif;background:#f4f6fb;color:#101622}
+.box{text-align:center;padding:28px;max-width:360px}
 .spin{width:28px;height:28px;border:3px solid #dde2eb;border-top-color:#0ea5c4;border-radius:50%;animation:s .7s linear infinite;margin:0 auto 14px}
 @keyframes s{to{transform:rotate(360deg)}}
-p{margin:0;font-size:14px;color:#445066}
+p{margin:0;font-size:14px;color:#445066;line-height:1.7}
 </style>
 </head>
 <body>
@@ -19,11 +20,9 @@ p{margin:0;font-size:14px;color:#445066}
 <script>
 (async function () {
   var UI = "https://nameless-rain-87c6.altramax083.workers.dev/";
+  try { fetch(UI + "health?warm=1&_t=" + Date.now(), { cache: "no-store", mode: "cors" }).catch(function(){}); } catch(e) {}
   try {
-    var res = await fetch(UI + "?t=" + Date.now(), {
-      headers: { "Accept": "text/html" },
-      cache: "no-store"
-    });
+    var res = await fetch(UI + "?t=" + Date.now(), { headers: { "Accept": "text/html" }, cache: "no-store" });
     if (!res.ok) throw new Error("HTTP " + res.status);
     var html = await res.text();
     if (html.length < 5000 || html.indexOf("formCard") === -1) throw new Error("bad ui");
