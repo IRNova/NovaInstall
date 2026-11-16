@@ -528,6 +528,38 @@ html[dir="rtl"] .detail dd{text-align:right}
     return attempt(1);
   }
 
+  function uploadWithProgress(path, token, form, onProgress) {
+    return new Promise(function (resolve, reject) {
+      var xhr = new XMLHttpRequest();
+      xhr.open("PUT", PROXY_URL + "/api" + path, true);
+      xhr.timeout = 150000;
+      xhr.setRequestHeader("Authorization", "Bearer " + token);
+      xhr.upload.onprogress = function (event) {
+        if (event.lengthComputable && typeof onProgress === "function") {
+          onProgress(Math.min(100, Math.round(event.loaded / event.total * 100)));
+        }
+      };
+      xhr.onload = function () {
+        var data = null;
+        try { data = xhr.responseText ? JSON.parse(xhr.responseText) : null; } catch (e) {}
+        if (xhr.status >= 200 && xhr.status < 300 && !(data && data.success === false)) {
+          resolve(data && Object.prototype.hasOwnProperty.call(data, "result") ? data.result : data);
+          return;
+        }
+        var detail = data && data.errors && data.errors.length
+          ? data.errors.map(function (item) { return item.message; }).join("; ")
+          : (xhr.responseText || ("HTTP " + xhr.status));
+        var error = new Error(detail);
+        error.status = xhr.status;
+        reject(error);
+      };
+      xhr.onerror = function () { reject(new Error("ارتباط هنگام ارسال فایل قطع شد؛ وضعیت آپلود را از Cloudflare بررسی کنید.")); };
+      xhr.ontimeout = function () { reject(new Error("آپلود پس از ۱۵۰ ثانیه به پایان نرسید.")); };
+      xhr.onabort = function () { reject(new Error("آپلود لغو شد.")); };
+      xhr.send(form);
+    });
+  }
+
   async function fetchWorkerSource() {
     var candidates = [
       PROXY_URL + "/source?_nova=" + Date.now(),
@@ -713,9 +745,19 @@ html[dir="rtl"] .detail dd{text-align:right}
     var password = generatePassword(20);
     var existing = null;
 
-    /* KV */
-    setStep("kv", "running");
-    var namespaces = await api("/accounts/" + account.id + "/storage/kv/namespaces?per_page=100", { token: token });
+    /* Run independent setup reads in parallel to reduce round trips. */
+    setStep("kv", "running", "بررسی فضای KV…");
+    setStep("source", "running", "دریافت نسخهٔ رسمی Worker…");
+    setStep("subdomain", "running", "بررسی آدرس عمومی…");
+    var setup = await Promise.all([
+      api("/accounts/" + account.id + "/storage/kv/namespaces?per_page=100", { token: token }),
+      fetchWorkerSource(),
+      api("/accounts/" + account.id + "/workers/subdomain", { token: token, allow404: true })
+    ]);
+    var namespaces = setup[0];
+    source = setup[1];
+    var subdomainInfo = setup[2];
+
     namespace = (namespaces || []).find(function (item) { return item.title === kvTitle; }) || null;
     if (!namespace) {
       namespace = await api("/accounts/" + account.id + "/storage/kv/namespaces", {
@@ -724,9 +766,6 @@ html[dir="rtl"] .detail dd{text-align:right}
     }
     setStep("kv", "ok", kvTitle);
 
-    /* Source: latest from GitHub */
-    setStep("source", "running");
-    source = await fetchWorkerSource();
     var versionMatch = source.match(/const\s+Version\s*=\s*['"`]([^'"`]+)['"`]/);
     sourceVersion = versionMatch ? versionMatch[1] : "";
     var buildMatch = source.match(/const\s+Build\s*=\s*['"`]([^'"`]+)['"`]/);
@@ -734,17 +773,15 @@ html[dir="rtl"] .detail dd{text-align:right}
     var sizeMb = (new Blob([source]).size / 1048576).toFixed(2);
     setStep("source", "ok", (sourceVersion || "Worker") + " · " + sizeMb + " MB");
 
-    /* Ensure the account-level workers.dev subdomain exists before upload.
-       Cloudflare can reject the first script upload with error 10063 otherwise. */
-    var subdomain = "";
-    var subdomainInfo = await api("/accounts/" + account.id + "/workers/subdomain", { token: token, allow404: true });
-    subdomain = (subdomainInfo && subdomainInfo.subdomain) || "";
+    /* Ensure the account-level workers.dev subdomain exists before upload. */
+    var subdomain = (subdomainInfo && subdomainInfo.subdomain) || "";
     if (!subdomain) {
       subdomain = "nova-" + randomSlug(6);
       await api("/accounts/" + account.id + "/workers/subdomain", {
         token: token, method: "PUT", body: JSON.stringify({ subdomain: subdomain })
       });
     }
+    setStep("subdomain", "ok", "workers.dev آماده است");
 
     /* Upload */
     setStep("upload", "running");
@@ -759,14 +796,15 @@ html[dir="rtl"] .detail dd{text-align:right}
     var form = new FormData();
     form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }), "metadata.json");
     form.append("worker.js", new Blob([source], { type: "application/javascript+module" }), "worker.js");
-    setStep("upload", "running", "ارسال " + sizeMb + " MB؛ فقط یک بار تلاش می‌کنیم تا آپلود تکراری انجام نشود…");
-    await api("/accounts/" + account.id + "/workers/scripts/" + WORKER_NAME, {
-      token: token,
-      method: "PUT",
-      body: form,
-      timeoutMs: 150000,
-      retry: false
-    });
+    setStep("upload", "running", "آماده‌سازی ارسال " + sizeMb + " MB…");
+    await uploadWithProgress(
+      "/accounts/" + account.id + "/workers/scripts/" + WORKER_NAME,
+      token,
+      form,
+      function (percent) {
+        setStep("upload", "running", "ارسال فایل به پروکسی: " + percent + "%");
+      }
+    );
     setStep("upload", "ok", WORKER_NAME);
 
     /* Password + KEY (keep them on re-install) */
@@ -799,13 +837,21 @@ html[dir="rtl"] .detail dd{text-align:right}
     /* Verify through the proxy (the Worker does not send CORS headers) */
     setStep("verify", "running", "waiting for the edge…");
     var verified = null;
-    for (var attempt = 1; attempt <= 30; attempt++) {
+    // Keep verification bounded; do not leave the user waiting for a long edge poll.
+    for (var attempt = 1; attempt <= 5; attempt++) {
+      var probeController = new AbortController();
+      var probeTimer = setTimeout(function () { probeController.abort(); }, 3500);
       try {
-        var probeResponse = await fetch(PROXY_URL + "/probe?url=" + encodeURIComponent(publicBase + "/install/status?_t=" + Date.now()), { cache: "no-store" });
+        var probeResponse = await fetch(PROXY_URL + "/probe?url=" + encodeURIComponent(publicBase + "/install/status?_t=" + Date.now()), {
+          cache: "no-store", signal: probeController.signal
+        });
         var probe = await probeResponse.json();
         if (probe && probe.ok && probe.status === 200 && probe.json && probe.json.kvOk && probe.json.admin) { verified = probe.json; break; }
-      } catch (e) {}
-      await new Promise(function (resolve) { setTimeout(resolve, 3000); });
+      } catch (e) {
+      } finally {
+        clearTimeout(probeTimer);
+      }
+      if (attempt < 5) await new Promise(function (resolve) { setTimeout(resolve, 700); });
     }
     if (verified) setStep("verify", "ok", "install/status · kvOk");
     else setStep("verify", "skip", "edge not ready yet");
