@@ -5,6 +5,7 @@
  */
 const CF_API = "https://api.cloudflare.com/client/v4";
 const SOURCE_URL = "https://raw.githubusercontent.com/IRNova/NovaWorker/main/_worker.js";
+const UI_URL = "https://raw.githubusercontent.com/IRNova/NovaInstall/main/e2e-live.html";
 const VERSION = "2.1.0";
 
 function corsHeaders(request, env) {
@@ -48,8 +49,27 @@ async function handle(request, env) {
   }
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
 
+  // GitHub Pages index.html bootstraps the installer by fetching this root URL.
+  if ((url.pathname === "/" || url.pathname === "/app") && request.method === "GET") {
+    try {
+      const upstream = await timedFetch(UI_URL + "?_nova=" + Date.now(), {
+        headers: { "Accept": "text/html" },
+        cf: { cacheTtl: 0, cacheEverything: false }
+      }, 20000);
+      const body = await upstream.text();
+      if (!upstream.ok || body.length < 5000 || !body.includes("formCard")) {
+        return json({ ok: false, error: "Installer UI source is unavailable or invalid." }, 502, headers);
+      }
+      headers.set("Content-Type", "text/html; charset=utf-8");
+      headers.set("Cache-Control", "no-store");
+      return new Response(body, { status: 200, headers });
+    } catch (error) {
+      return json({ ok: false, error: error && error.name === "AbortError" ? "Installer UI fetch timeout" : "Installer UI fetch failed" }, 502, headers);
+    }
+  }
+
   if (url.pathname === "/health" && request.method === "GET") {
-    return json({ ok: true, version: VERSION, capabilities: ["cloudflare-api", "worker-source", "probe"] }, 200, headers);
+    return json({ ok: true, version: VERSION, capabilities: ["installer-ui", "cloudflare-api", "worker-source", "probe"] }, 200, headers);
   }
 
   if (url.pathname === "/source" && request.method === "GET") {
