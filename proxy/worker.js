@@ -111,7 +111,7 @@ async function handle(request, env) {
       }, 45000);
       const responseHeaders = new Headers(headers);
       upstream.headers.forEach((value, key) => {
-        if (!["set-cookie", "connection", "transfer-encoding", "content-encoding", "content-length"].includes(key.toLowerCase())) {
+        if (!["set-cookie", "connection", "transfer-encoding", "content-encoding", "content-length"].includes(key.toLowerCase()) && !key.toLowerCase().startsWith("access-control-")) {
           responseHeaders.set(key, value);
         }
       });
