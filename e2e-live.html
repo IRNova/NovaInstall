@@ -8,9 +8,7 @@
 <meta name="nova-proxy" content="https://nameless-rain-87c6.altramax083.workers.dev" />
 <title>Nova Worker — نصب آسان</title>
 <link rel="icon" type="image/svg+xml" href="assets/logo-mark.svg" />
-<link rel="preload" href="assets/vazirmatn-var.woff2" as="font" type="font/woff2" crossorigin />
 <style>
-@font-face{font-family:'Vazirmatn';src:url('assets/vazirmatn-var.woff2') format('woff2');font-weight:100 900;font-style:normal;font-display:swap}
 :root{
   --bg:#f4f6fb; --card:#fff; --c2:#f7f9fc; --bd:#e6eaf1; --bd2:#dde2eb;
   --tx:#101622; --tx2:#445066; --mu:#8a93a6;
@@ -25,7 +23,7 @@
 }
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}
-body{min-height:100vh;background:var(--bg);color:var(--tx);font-family:'Vazirmatn','Inter',system-ui,-apple-system,'Segoe UI',Tahoma,sans-serif;font-size:14px;line-height:1.8;overflow-x:clip}
+body{min-height:100vh;background:var(--bg);color:var(--tx);font-family:Tahoma,system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:1.8;overflow-x:clip}
 body::before{content:"";position:fixed;inset:0;z-index:-2;pointer-events:none;background:radial-gradient(760px 420px at 12% -10%,rgba(14,165,196,.16),transparent 62%),radial-gradient(700px 430px at 92% 2%,rgba(124,58,237,.14),transparent 58%),radial-gradient(900px 520px at 50% 120%,rgba(14,165,196,.10),transparent 60%)}
 body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.5;background-image:linear-gradient(rgba(16,22,34,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(16,22,34,.035) 1px,transparent 1px);background-size:44px 44px;-webkit-mask-image:radial-gradient(760px 620px at 50% 30%,#000 18%,transparent 78%);mask-image:radial-gradient(760px 620px at 50% 30%,#000 18%,transparent 78%)}
 .wrap{max-width:820px;margin:0 auto;padding:26px 18px 54px;position:relative;z-index:1}
@@ -294,7 +292,7 @@ html[dir="rtl"] .detail dd{text-align:right}
 
   /* همه‌چیز داخل کد ثابت است؛ کاربر فقط توکن می‌دهد. */
   var PROXY_URL = "https://nameless-rain-87c6.altramax083.workers.dev";
-  var WORKER_NAME = "nova-e2e-71js";
+  var WORKER_NAME = "";
   var PANEL_URL = "https://nova-panel.github.io";
   var COMPAT_DATE = "2025-11-04";
   var WORKER_SOURCE = "https://raw.githubusercontent.com/IRNova/NovaWorker/main/_worker.js";
@@ -481,31 +479,109 @@ html[dir="rtl"] .detail dd{text-align:right}
 
   function api(path, options) {
     options = options || {};
+    var method = String(options.method || "GET").toUpperCase();
+    // Only retry safe reads by default. A script upload is a large, state-changing
+    // request; retrying it after a timeout can turn one slow upload into 2-3 minutes.
+    var retryable = options.retry === true || (options.retry !== false && method === "GET");
+    var timeoutMs = Math.max(1000, Number(options.timeoutMs) || 30000);
     var headers = new Headers(options.headers || {});
     headers.set("Authorization", "Bearer " + options.token);
     if (options.body && !(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
-    return fetch(PROXY_URL + "/api" + path, {
-      method: options.method || "GET",
-      headers: headers,
-      body: options.body,
-      cache: "no-store"
-    }).then(function (response) {
-      return response.text().then(function (text) {
-        var data = null;
-        try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }
-        if (options.allow404 && response.status === 404) return null;
-        if (!response.ok || (data && data.success === false)) {
-          var detail = data && data.errors && data.errors.length
-            ? data.errors.map(function (item) { return item.message; }).join("; ")
-            : (text || ("HTTP " + response.status));
-          var error = new Error(detail);
-          error.status = response.status;
-          error.codes = data && data.errors ? data.errors.map(function (item) { return item.code; }) : [];
-          throw error;
+
+    function attempt(number) {
+      var controller = new AbortController();
+      var timer = setTimeout(function () { controller.abort(); }, timeoutMs);
+      return fetch(PROXY_URL + "/api" + path, {
+        method: method,
+        headers: headers,
+        body: options.body,
+        cache: "no-store",
+        signal: controller.signal
+      }).then(function (response) {
+        return response.text().then(function (text) {
+          var data = null;
+          try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }
+          if (options.allow404 && response.status === 404) return null;
+          if (!response.ok || (data && data.success === false)) {
+            var detail = data && data.errors && data.errors.length
+              ? data.errors.map(function (item) { return item.message; }).join("; ")
+              : (text || ("HTTP " + response.status));
+            var error = new Error(detail);
+            error.status = response.status;
+            error.codes = data && data.errors ? data.errors.map(function (item) { return item.code; }) : [];
+            throw error;
+          }
+          return data && Object.prototype.hasOwnProperty.call(data, "result") ? data.result : data;
+        });
+      }).catch(function (error) {
+        var transient = !error.status || error.status === 429 || error.status >= 500;
+        if (retryable && transient && number < 3) {
+          return new Promise(function (resolve) { setTimeout(resolve, 700 * Math.pow(2, number - 1)); })
+            .then(function () { return attempt(number + 1); });
         }
-        return data && Object.prototype.hasOwnProperty.call(data, "result") ? data.result : data;
-      });
+        if (error.name === "AbortError") throw new Error("Cloudflare API timeout after 30 seconds.");
+        throw error;
+      }).finally(function () { clearTimeout(timer); });
+    }
+    return attempt(1);
+  }
+
+  function uploadWithProgress(path, token, form, onProgress) {
+    return new Promise(function (resolve, reject) {
+      var xhr = new XMLHttpRequest();
+      xhr.open("PUT", PROXY_URL + "/api" + path, true);
+      xhr.timeout = 150000;
+      xhr.setRequestHeader("Authorization", "Bearer " + token);
+      xhr.upload.onprogress = function (event) {
+        if (event.lengthComputable && typeof onProgress === "function") {
+          onProgress(Math.min(100, Math.round(event.loaded / event.total * 100)));
+        }
+      };
+      xhr.onload = function () {
+        var data = null;
+        try { data = xhr.responseText ? JSON.parse(xhr.responseText) : null; } catch (e) {}
+        if (xhr.status >= 200 && xhr.status < 300 && !(data && data.success === false)) {
+          resolve(data && Object.prototype.hasOwnProperty.call(data, "result") ? data.result : data);
+          return;
+        }
+        var detail = data && data.errors && data.errors.length
+          ? data.errors.map(function (item) { return item.message; }).join("; ")
+          : (xhr.responseText || ("HTTP " + xhr.status));
+        var error = new Error(detail);
+        error.status = xhr.status;
+        reject(error);
+      };
+      xhr.onerror = function () { reject(new Error("ارتباط هنگام ارسال فایل قطع شد؛ وضعیت آپلود را از Cloudflare بررسی کنید.")); };
+      xhr.ontimeout = function () { reject(new Error("آپلود پس از ۱۵۰ ثانیه به پایان نرسید.")); };
+      xhr.onabort = function () { reject(new Error("آپلود لغو شد.")); };
+      xhr.send(form);
     });
+  }
+
+  async function fetchWorkerSource() {
+    var candidates = [
+      PROXY_URL + "/source?_nova=" + Date.now(),
+      WORKER_SOURCE + "?_nova=" + Date.now()
+    ];
+    var failures = [];
+    for (var i = 0; i < candidates.length; i++) {
+      var controller = new AbortController();
+      var timer = setTimeout(function () { controller.abort(); }, 25000);
+      try {
+        var response = await fetch(candidates[i], { cache: "no-store", signal: controller.signal });
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        var text = await response.text();
+        if (text.length < 1024 || text.indexOf("export default") === -1) {
+          throw new Error("Downloaded source is empty or is not a valid module Worker.");
+        }
+        return text;
+      } catch (error) {
+        failures.push((i === 0 ? "proxy" : "GitHub") + ": " + (error.message || error));
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    throw new Error("دریافت سورس Worker از هر دو مسیر ناموفق بود. " + failures.join(" | "));
   }
 
   /* ------------------------------------------------------------ progress UI */
@@ -633,6 +709,7 @@ html[dir="rtl"] .detail dd{text-align:right}
       }
 
       state.accountId = account.id;
+      WORKER_NAME = "nova-" + account.id.slice(0, 10).toLowerCase();
       setStep("account", "ok", account.name + " · " + account.id.slice(0, 8));
       $("accountPicker").hidden = true;
       await installRest(account);
@@ -666,9 +743,19 @@ html[dir="rtl"] .detail dd{text-align:right}
     var password = generatePassword(20);
     var existing = null;
 
-    /* KV */
-    setStep("kv", "running");
-    var namespaces = await api("/accounts/" + account.id + "/storage/kv/namespaces?per_page=100", { token: token });
+    /* Run independent setup reads in parallel to reduce round trips. */
+    setStep("kv", "running", "بررسی فضای KV…");
+    setStep("source", "running", "دریافت نسخهٔ رسمی Worker…");
+    setStep("subdomain", "running", "بررسی آدرس عمومی…");
+    var setup = await Promise.all([
+      api("/accounts/" + account.id + "/storage/kv/namespaces?per_page=100", { token: token }),
+      fetchWorkerSource(),
+      api("/accounts/" + account.id + "/workers/subdomain", { token: token, allow404: true })
+    ]);
+    var namespaces = setup[0];
+    source = setup[1];
+    var subdomainInfo = setup[2];
+
     namespace = (namespaces || []).find(function (item) { return item.title === kvTitle; }) || null;
     if (!namespace) {
       namespace = await api("/accounts/" + account.id + "/storage/kv/namespaces", {
@@ -677,18 +764,22 @@ html[dir="rtl"] .detail dd{text-align:right}
     }
     setStep("kv", "ok", kvTitle);
 
-    /* Source: latest from GitHub */
-    setStep("source", "running");
-    var response = await fetch(WORKER_SOURCE + "?_nova=" + Date.now(), { cache: "no-store" });
-    if (!response.ok) throw new Error("GitHub source: HTTP " + response.status);
-    source = await response.text();
-    if (source.indexOf("export default") === -1) throw new Error("Downloaded source is not a Worker.");
     var versionMatch = source.match(/const\s+Version\s*=\s*['"`]([^'"`]+)['"`]/);
     sourceVersion = versionMatch ? versionMatch[1] : "";
     var buildMatch = source.match(/const\s+Build\s*=\s*['"`]([^'"`]+)['"`]/);
     sourceBuild = buildMatch ? buildMatch[1] : "";
     var sizeMb = (new Blob([source]).size / 1048576).toFixed(2);
     setStep("source", "ok", (sourceVersion || "Worker") + " · " + sizeMb + " MB");
+
+    /* Ensure the account-level workers.dev subdomain exists before upload. */
+    var subdomain = (subdomainInfo && subdomainInfo.subdomain) || "";
+    if (!subdomain) {
+      subdomain = "nova-" + randomSlug(6);
+      await api("/accounts/" + account.id + "/workers/subdomain", {
+        token: token, method: "PUT", body: JSON.stringify({ subdomain: subdomain })
+      });
+    }
+    setStep("subdomain", "ok", "workers.dev آماده است");
 
     /* Upload */
     setStep("upload", "running");
@@ -703,7 +794,15 @@ html[dir="rtl"] .detail dd{text-align:right}
     var form = new FormData();
     form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }), "metadata.json");
     form.append("worker.js", new Blob([source], { type: "application/javascript+module" }), "worker.js");
-    await api("/accounts/" + account.id + "/workers/scripts/" + WORKER_NAME, { token: token, method: "PUT", body: form });
+    setStep("upload", "running", "آماده‌سازی ارسال " + sizeMb + " MB…");
+    await uploadWithProgress(
+      "/accounts/" + account.id + "/workers/scripts/" + WORKER_NAME,
+      token,
+      form,
+      function (percent) {
+        setStep("upload", "running", "ارسال فایل به پروکسی: " + percent + "%");
+      }
+    );
     setStep("upload", "ok", WORKER_NAME);
 
     /* Password + KEY (keep them on re-install) */
@@ -718,7 +817,7 @@ html[dir="rtl"] .detail dd{text-align:right}
       installedAt: (existing && existing.installedAt) || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       installer: "NovaInstall-web",
-      installerVersion: "1.1.0"
+      installerVersion: "2.1.0"
     });
     await api("/accounts/" + account.id + "/storage/kv/namespaces/" + namespace.id + "/values/install.json", {
       token: token, method: "PUT", body: JSON.stringify(record)
@@ -727,17 +826,6 @@ html[dir="rtl"] .detail dd{text-align:right}
 
     /* Public URL */
     setStep("subdomain", "running");
-    var subdomain = "";
-    try {
-      var info = await api("/accounts/" + account.id + "/workers/subdomain", { token: token });
-      subdomain = (info && info.subdomain) || "";
-    } catch (e) { subdomain = ""; }
-    if (!subdomain) {
-      subdomain = "nova-" + randomSlug(6);
-      await api("/accounts/" + account.id + "/workers/subdomain", {
-        token: token, method: "PUT", body: JSON.stringify({ subdomain: subdomain })
-      });
-    }
     await api("/accounts/" + account.id + "/workers/scripts/" + WORKER_NAME + "/subdomain", {
       token: token, method: "PUT", body: JSON.stringify({ enabled: true })
     });
@@ -747,13 +835,21 @@ html[dir="rtl"] .detail dd{text-align:right}
     /* Verify through the proxy (the Worker does not send CORS headers) */
     setStep("verify", "running", "waiting for the edge…");
     var verified = null;
-    for (var attempt = 1; attempt <= 30; attempt++) {
+    // Keep verification bounded; do not leave the user waiting for a long edge poll.
+    for (var attempt = 1; attempt <= 5; attempt++) {
+      var probeController = new AbortController();
+      var probeTimer = setTimeout(function () { probeController.abort(); }, 3500);
       try {
-        var probeResponse = await fetch(PROXY_URL + "/probe?url=" + encodeURIComponent(publicBase + "/install/status?_t=" + Date.now()), { cache: "no-store" });
+        var probeResponse = await fetch(PROXY_URL + "/probe?url=" + encodeURIComponent(publicBase + "/install/status?_t=" + Date.now()), {
+          cache: "no-store", signal: probeController.signal
+        });
         var probe = await probeResponse.json();
         if (probe && probe.ok && probe.status === 200 && probe.json && probe.json.kvOk && probe.json.admin) { verified = probe.json; break; }
-      } catch (e) {}
-      await new Promise(function (resolve) { setTimeout(resolve, 3000); });
+      } catch (e) {
+      } finally {
+        clearTimeout(probeTimer);
+      }
+      if (attempt < 5) await new Promise(function (resolve) { setTimeout(resolve, 700); });
     }
     if (verified) setStep("verify", "ok", "install/status · kvOk");
     else setStep("verify", "skip", "edge not ready yet");
