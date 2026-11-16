@@ -482,14 +482,17 @@ html[dir="rtl"] .detail dd{text-align:right}
   function api(path, options) {
     options = options || {};
     var method = String(options.method || "GET").toUpperCase();
-    var retryable = method === "GET" || method === "PUT" || method === "DELETE";
+    // Only retry safe reads by default. A script upload is a large, state-changing
+    // request; retrying it after a timeout can turn one slow upload into 2-3 minutes.
+    var retryable = options.retry === true || (options.retry !== false && method === "GET");
+    var timeoutMs = Math.max(1000, Number(options.timeoutMs) || 30000);
     var headers = new Headers(options.headers || {});
     headers.set("Authorization", "Bearer " + options.token);
     if (options.body && !(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
 
     function attempt(number) {
       var controller = new AbortController();
-      var timer = setTimeout(function () { controller.abort(); }, 30000);
+      var timer = setTimeout(function () { controller.abort(); }, timeoutMs);
       return fetch(PROXY_URL + "/api" + path, {
         method: method,
         headers: headers,
@@ -756,7 +759,14 @@ html[dir="rtl"] .detail dd{text-align:right}
     var form = new FormData();
     form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }), "metadata.json");
     form.append("worker.js", new Blob([source], { type: "application/javascript+module" }), "worker.js");
-    await api("/accounts/" + account.id + "/workers/scripts/" + WORKER_NAME, { token: token, method: "PUT", body: form });
+    setStep("upload", "running", "ارسال " + sizeMb + " MB؛ فقط یک بار تلاش می‌کنیم تا آپلود تکراری انجام نشود…");
+    await api("/accounts/" + account.id + "/workers/scripts/" + WORKER_NAME, {
+      token: token,
+      method: "PUT",
+      body: form,
+      timeoutMs: 150000,
+      retry: false
+    });
     setStep("upload", "ok", WORKER_NAME);
 
     /* Password + KEY (keep them on re-install) */
