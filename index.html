@@ -1346,6 +1346,37 @@ h1{font-weight:800}
       subdomain = (sub && sub.subdomain) || "";
     } catch (e) {}
 
+    var accountName = accountId;
+    try {
+      var accountInfo = await apiJson(token, "/accounts/" + accountId);
+      accountName = (accountInfo && accountInfo.name) || accountName;
+    } catch (e) {}
+
+    // Older installations may have an install.json created before full
+    // metadata was persisted. Read the deployed Worker's own version route
+    // to recover its actual version and build without reinstalling it.
+    async function deployedVersion(baseUrl) {
+      var info = { version: "", build: "" };
+      if (!baseUrl) return info;
+      try {
+        var response = await fetchTimeout(baseUrl.replace(/\\/$/, "") + "/version", {
+          method: "GET",
+          cache: "no-store",
+          headers: { "Accept": "application/json, text/plain, */*" }
+        }, 12000);
+        if (!response.ok) return info;
+        var raw = (await response.text()).trim();
+        try {
+          var parsed = JSON.parse(raw);
+          info.version = String(parsed.version || parsed.Version || parsed.name || "");
+          info.build = String(parsed.build || parsed.Build || parsed.timestamp || "");
+        } catch (e) {
+          info.version = raw.slice(0, 100);
+        }
+      } catch (e) {}
+      return info;
+    }
+
     // Cloudflare calls through workers.dev can take ~20s each in slow networks,
     // so poll patiently and only fetch the tiny install keys (never the ~5 MB
     // staged source).
@@ -1370,9 +1401,10 @@ h1{font-weight:800}
         try { data = JSON.parse(install); } catch (e) {}
         if (data && data.ADMIN) {
           var base = subdomain ? "https://" + workerName + "." + subdomain + ".workers.dev" : "";
+          var deployed = await deployedVersion(base);
           return {
             worker: data.worker || workerName,
-            account: data.account || accountId,
+            account: data.account || accountName,
             accountId: data.accountId || accountId,
             kv: data.kv || namespace.title || (workerName + "-kv"),
             kvId: data.kvId || namespace.id,
@@ -1381,8 +1413,8 @@ h1{font-weight:800}
             adminUrl: base + "/admin",
             password: data.ADMIN,
             verified: true,
-            version: data.version || "",
-            build: data.build || ""
+            version: data.version || deployed.version || "نامشخص",
+            build: data.build || deployed.build || "نسخه نصب‌شده قبلی"
           };
         }
       }
@@ -1407,14 +1439,20 @@ h1{font-weight:800}
         var body = null;
         try { body = await response.json(); } catch (e) {}
         if (response.ok && body && body.ok) {
+          var deployed = await deployedVersion("https://" + workerName + "." + subdomain + ".workers.dev");
           return {
             worker: workerName,
+            account: accountName,
+            accountId: accountId,
+            kv: namespace.title || (workerName + "-kv"),
+            kvId: namespace.id,
+            source: WORKER_SOURCE,
             loginUrl: body.loginUrl,
             adminUrl: String(body.loginUrl || "").replace(/\/login$/, "/admin"),
             password: body.password || password,
             verified: true,
-            version: "",
-            build: ""
+            version: deployed.version || "نامشخص",
+            build: deployed.build || "نسخه نصب‌شده قبلی"
           };
         }
         termWrite("run", "activate wait — " + ((body && body.error) || ("HTTP " + response.status)));
