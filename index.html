@@ -1320,9 +1320,7 @@ h1{font-weight:800}
             return item.title === workerName + "-kv";
           });
           if (found) { accountId = accountIds[i]; namespace = found; }
-        } catch (e) {
-          /* try the next account */
-        }
+        } catch (e) {}
       }
     }
 
@@ -1334,11 +1332,27 @@ h1{font-weight:800}
           if (item && item.id && accountIds.indexOf(item.id) < 0) accountIds.push(item.id);
         });
         await findNamespace();
-      } catch (e) {
-        termWrite("run", "accounts — " + ((e && e.message) || e));
-      }
+      } catch (e) {}
     }
     if (!namespace) return null;
+
+    var installText = await apiText(
+      token,
+      "/accounts/" + accountId + "/storage/kv/namespaces/" + namespace.id + "/values/install.json"
+    ).catch(function () { return null; });
+    if (!installText) return null;
+
+    var data = {};
+    try { data = JSON.parse(installText); } catch (e) {}
+    if (!data || !data.ADMIN) return null;
+
+    var accountName = data.account || accountId;
+    if (!data.account) {
+      try {
+        var accountInfo = await apiJson(token, "/accounts/" + accountId);
+        accountName = (accountInfo && accountInfo.name) || accountName;
+      } catch (e) {}
+    }
 
     var subdomain = "";
     try {
@@ -1346,122 +1360,23 @@ h1{font-weight:800}
       subdomain = (sub && sub.subdomain) || "";
     } catch (e) {}
 
-    var accountName = accountId;
-    try {
-      var accountInfo = await apiJson(token, "/accounts/" + accountId);
-      accountName = (accountInfo && accountInfo.name) || accountName;
-    } catch (e) {}
-
-    // Older installations may have an install.json created before full
-    // metadata was persisted. Read the deployed Worker's own version route
-    // to recover its actual version and build without reinstalling it.
-    async function deployedVersion(baseUrl) {
-      var info = { version: "", build: "" };
-      if (!baseUrl) return info;
-      try {
-        var response = await fetchTimeout(baseUrl.replace(/\/$/, "") + "/version", {
-          method: "GET",
-          cache: "no-store",
-          headers: { "Accept": "application/json, text/plain, */*" }
-        }, 12000);
-        if (!response.ok) return info;
-        var raw = (await response.text()).trim();
-        try {
-          var parsed = JSON.parse(raw);
-          info.version = String(parsed.version || parsed.Version || parsed.name || "");
-          info.build = String(parsed.build || parsed.Build || parsed.timestamp || "");
-        } catch (e) {
-          info.version = raw.slice(0, 100);
-        }
-      } catch (e) {}
-      return info;
-    }
-
-    // Cloudflare calls through workers.dev can take ~20s each in slow networks,
-    // so poll patiently and only fetch the tiny install keys (never the ~5 MB
-    // staged source).
-    var deadline = Date.now() + 360000;
-    var firstRound = true;
-    while (Date.now() < deadline) {
-      if (!firstRound) await sleep(3000);
-      firstRound = false;
-
-      var values = await Promise.all([
-        kvValue(token, accountId, namespace.id, "install.json").catch(function () { return null; }),
-        kvValue(token, accountId, namespace.id, "__install_secret").catch(function () { return null; }),
-        kvValue(token, accountId, namespace.id, "__install_password").catch(function () { return null; })
-      ]);
-      var install = values[0];
-      var secret = values[1];
-      var password = values[2] || "";
-
-      // The bootstrap writes install.json only after a successful deploy.
-      if (install) {
-        var data = {};
-        try { data = JSON.parse(install); } catch (e) {}
-        if (data && data.ADMIN) {
-          var base = subdomain ? "https://" + workerName + "." + subdomain + ".workers.dev" : "";
-          var deployed = await deployedVersion(base);
-          return {
-            worker: data.worker || workerName,
-            account: data.account || accountName,
-            accountId: data.accountId || accountId,
-            kv: data.kv || namespace.title || (workerName + "-kv"),
-            kvId: data.kvId || namespace.id,
-            source: data.source || WORKER_SOURCE,
-            loginUrl: base + "/login",
-            adminUrl: base + "/admin",
-            password: data.ADMIN,
-            verified: true,
-            version: data.version || deployed.version || "نامشخص",
-            build: data.build || deployed.build || "نسخه نصب‌شده قبلی"
-          };
-        }
-      }
-
-      if (!secret || !subdomain) continue;
-
-      try {
-        await apiJson(
-          token,
-          "/accounts/" + accountId + "/workers/scripts/" + workerName + "/subdomain",
-          "POST",
-          { enabled: true }
-        );
-      } catch (e) {}
-
-      var activateUrl = "https://" + workerName + "." + subdomain + ".workers.dev/__nova_activate";
-      try {
-        var response = await fetchTimeout(activateUrl, {
-          method: "POST",
-          headers: { "x-nova-install": secret, "Accept": "application/json" }
-        }, 45000);
-        var body = null;
-        try { body = await response.json(); } catch (e) {}
-        if (response.ok && body && body.ok) {
-          var deployed = await deployedVersion("https://" + workerName + "." + subdomain + ".workers.dev");
-          return {
-            worker: workerName,
-            account: accountName,
-            accountId: accountId,
-            kv: namespace.title || (workerName + "-kv"),
-            kvId: namespace.id,
-            source: WORKER_SOURCE,
-            loginUrl: body.loginUrl,
-            adminUrl: String(body.loginUrl || "").replace(/\/login$/, "/admin"),
-            password: body.password || password,
-            verified: true,
-            version: deployed.version || "نامشخص",
-            build: deployed.build || "نسخه نصب‌شده قبلی"
-          };
-        }
-        termWrite("run", "activate wait — " + ((body && body.error) || ("HTTP " + response.status)));
-      } catch (e) {
-        termWrite("run", "activate retry — " + ((e && e.message) || e));
-      }
-    }
-    return null;
+    var base = subdomain ? "https://" + workerName + "." + subdomain + ".workers.dev" : "";
+    return {
+      worker: data.worker || workerName,
+      account: accountName,
+      accountId: data.accountId || accountId,
+      kv: data.kv || namespace.title || (workerName + "-kv"),
+      kvId: data.kvId || namespace.id,
+      source: data.source || WORKER_SOURCE,
+      loginUrl: base + "/login",
+      adminUrl: base + "/admin",
+      password: data.ADMIN,
+      verified: Boolean(base),
+      version: data.version || "نامشخص",
+      build: data.build || "نسخه نصب‌شده قبلی"
+    };
   }
+
 
   function finishInstall(result) {
     state.result = result;
