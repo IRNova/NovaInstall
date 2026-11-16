@@ -294,7 +294,7 @@ html[dir="rtl"] .detail dd{text-align:right}
 
   /* همه‌چیز داخل کد ثابت است؛ کاربر فقط توکن می‌دهد. */
   var PROXY_URL = "https://nameless-rain-87c6.altramax083.workers.dev";
-  var WORKER_NAME = "nova-e2e-71js";
+  var WORKER_NAME = "nova-worker";
   var PANEL_URL = "https://nova-panel.github.io";
   var COMPAT_DATE = "2025-11-04";
   var WORKER_SOURCE = "https://raw.githubusercontent.com/IRNova/NovaWorker/main/_worker.js";
@@ -479,33 +479,50 @@ html[dir="rtl"] .detail dd{text-align:right}
     document.body.removeChild(area);
   }
 
+  function sleep(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
+
+  /* One Cloudflare call through the proxy. Retries network errors, 429 and 5xx
+     (GET: 3 tries, other methods: `retries` option, default 1). */
   function api(path, options) {
     options = options || {};
-    var headers = new Headers(options.headers || {});
-    headers.set("Authorization", "Bearer " + options.token);
-    if (options.body && !(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
-    return fetch(PROXY_URL + "/api" + path, {
-      method: options.method || "GET",
-      headers: headers,
-      body: options.body,
-      cache: "no-store"
-    }).then(function (response) {
-      return response.text().then(function (text) {
-        var data = null;
-        try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }
-        if (options.allow404 && response.status === 404) return null;
-        if (!response.ok || (data && data.success === false)) {
-          var detail = data && data.errors && data.errors.length
-            ? data.errors.map(function (item) { return item.message; }).join("; ")
-            : (text || ("HTTP " + response.status));
-          var error = new Error(detail);
-          error.status = response.status;
-          error.codes = data && data.errors ? data.errors.map(function (item) { return item.code; }) : [];
-          throw error;
-        }
-        return data && Object.prototype.hasOwnProperty.call(data, "result") ? data.result : data;
-      });
-    });
+    var method = options.method || "GET";
+    var maxTries = options.retries || (method === "GET" ? 3 : 1);
+    var timeoutMs = options.timeoutMs || 120000;
+    var attempt = 0;
+
+    function once() {
+      attempt += 1;
+      var headers = new Headers(options.headers || {});
+      headers.set("Authorization", "Bearer " + options.token);
+      if (options.body && !(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
+      var ctrl = new AbortController();
+      var timer = setTimeout(function () { ctrl.abort(); }, timeoutMs);
+      return fetch(PROXY_URL + "/api" + path, {
+        method: method, headers: headers, body: options.body, cache: "no-store", signal: ctrl.signal
+      }).then(function (response) {
+        return response.text().then(function (text) {
+          var data = null;
+          try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }
+          if (options.allow404 && response.status === 404) return null;
+          if (!response.ok || (data && data.success === false)) {
+            var detail = data && data.errors && data.errors.length
+              ? data.errors.map(function (item) { return (item.code ? "[" + item.code + "] " : "") + item.message; }).join("; ")
+              : (text.slice(0, 300) || ("HTTP " + response.status));
+            var error = new Error(detail);
+            error.status = response.status;
+            error.codes = data && data.errors ? data.errors.map(function (item) { return item.code; }) : [];
+            throw error;
+          }
+          return data && Object.prototype.hasOwnProperty.call(data, "result") ? data.result : data;
+        });
+      }).catch(function (error) {
+        var retryable = !error.status || error.status === 429 || error.status >= 500;
+        if (retryable && attempt < maxTries) return sleep(900 * attempt).then(once);
+        if (!error.status) error.message = "Network: " + (error.name === "AbortError" ? "timeout" : error.message);
+        throw error;
+      }).finally(function () { clearTimeout(timer); });
+    }
+    return once();
   }
 
   /* ------------------------------------------------------------ progress UI */
@@ -655,23 +672,87 @@ html[dir="rtl"] .detail dd{text-align:right}
     if (state.accountId) select.value = state.accountId;
   }
 
+  /* Account-level workers.dev subdomain. A Worker upload on an account that has
+     none is rejected (10063), so this MUST run before the upload. */
+  async function ensureAccountSubdomain(accountId, token) {
+    var info = null;
+    try { info = await api("/accounts/" + accountId + "/workers/subdomain", { token: token }); } catch (e) { info = null; }
+    if (info && info.subdomain) return info.subdomain;
+    var lastError = null;
+    for (var i = 0; i < 5; i++) {
+      var candidate = "nova-" + randomSlug(6);
+      try {
+        var created = await api("/accounts/" + accountId + "/workers/subdomain", {
+          token: token, method: "PUT", body: JSON.stringify({ subdomain: candidate })
+        });
+        return (created && created.subdomain) || candidate;
+      } catch (e) { lastError = e; }
+    }
+    throw lastError || new Error("Could not register a workers.dev subdomain.");
+  }
+
+  async function fetchSource() {
+    var url = WORKER_SOURCE + "?_nova=" + Date.now();
+    var text = "";
+    try {
+      var ctrl = new AbortController();
+      var timer = setTimeout(function () { ctrl.abort(); }, 20000);
+      var direct = await fetch(url, { cache: "no-store", signal: ctrl.signal });
+      clearTimeout(timer);
+      if (!direct.ok) throw new Error("HTTP " + direct.status);
+      text = await direct.text();
+    } catch (e) {
+      /* GitHub may be blocked or slow for the visitor: let the proxy fetch it. */
+      var viaProxy = await fetch(PROXY_URL + "/source?_nova=" + Date.now(), { cache: "no-store" });
+      if (!viaProxy.ok) throw new Error("GitHub source: HTTP " + viaProxy.status);
+      text = await viaProxy.text();
+    }
+    if (!/export\s+default\s*\{/.test(text)) throw new Error("Downloaded source is not a Worker.");
+    return text;
+  }
+
+  async function waitForScript(accountId, token) {
+    for (var i = 0; i < 8; i++) {
+      try {
+        var res = await api("/accounts/" + accountId + "/workers/scripts/" + WORKER_NAME + "/settings", { token: token, allow404: true });
+        if (res) return true;
+      } catch (e) { if ((e.codes || []).indexOf(10007) === -1) throw e; }
+      await sleep(700 * (i + 1));
+    }
+    return false;
+  }
+
+  async function enableWorkersDev(accountId, token) {
+    var path = "/accounts/" + accountId + "/workers/scripts/" + WORKER_NAME + "/subdomain";
+    var method = "POST";
+    var lastError = null;
+    for (var i = 0; i < 10; i++) {
+      try {
+        await api(path, { token: token, method: method, body: JSON.stringify({ enabled: true }) });
+        return;
+      } catch (e) {
+        lastError = e;
+        if (e.status === 405 && method === "POST") { method = "PUT"; continue; }   /* old API shape */
+        if ((e.codes || []).indexOf(10007) !== -1) { await sleep(1000 * (i + 1)); continue; } /* edge not consistent yet */
+        throw e;
+      }
+    }
+    throw lastError;
+  }
+
   async function installRest(account) {
     var token = state.token;
+    var accountId = account.id;
     var kvTitle = WORKER_NAME + "-kv";
-    var namespace = null;
-    var source = "";
-    var sourceVersion = "";
-    var sourceBuild = "";
     var key = randomKey();
     var password = generatePassword(20);
-    var existing = null;
 
-    /* KV */
+    /* KV (reuse when it already exists) */
     setStep("kv", "running");
-    var namespaces = await api("/accounts/" + account.id + "/storage/kv/namespaces?per_page=100", { token: token });
-    namespace = (namespaces || []).find(function (item) { return item.title === kvTitle; }) || null;
+    var namespaces = await api("/accounts/" + accountId + "/storage/kv/namespaces?per_page=100", { token: token });
+    var namespace = (namespaces || []).find(function (item) { return item.title === kvTitle; }) || null;
     if (!namespace) {
-      namespace = await api("/accounts/" + account.id + "/storage/kv/namespaces", {
+      namespace = await api("/accounts/" + accountId + "/storage/kv/namespaces", {
         token: token, method: "POST", body: JSON.stringify({ title: kvTitle })
       });
     }
@@ -679,19 +760,16 @@ html[dir="rtl"] .detail dd{text-align:right}
 
     /* Source: latest from GitHub */
     setStep("source", "running");
-    var response = await fetch(WORKER_SOURCE + "?_nova=" + Date.now(), { cache: "no-store" });
-    if (!response.ok) throw new Error("GitHub source: HTTP " + response.status);
-    source = await response.text();
-    if (source.indexOf("export default") === -1) throw new Error("Downloaded source is not a Worker.");
-    var versionMatch = source.match(/const\s+Version\s*=\s*['"`]([^'"`]+)['"`]/);
-    sourceVersion = versionMatch ? versionMatch[1] : "";
-    var buildMatch = source.match(/const\s+Build\s*=\s*['"`]([^'"`]+)['"`]/);
-    sourceBuild = buildMatch ? buildMatch[1] : "";
+    var source = await fetchSource();
+    var sourceVersion = (source.match(/const\s+Version\s*=\s*['"`]([^'"`]+)['"`]/) || [])[1] || "";
+    var sourceBuild = (source.match(/const\s+Build\s*=\s*['"`]([^'"`]+)['"`]/) || [])[1] || "";
     var sizeMb = (new Blob([source]).size / 1048576).toFixed(2);
     setStep("source", "ok", (sourceVersion || "Worker") + " · " + sizeMb + " MB");
 
-    /* Upload */
-    setStep("upload", "running");
+    /* Upload: subdomain first, then script, then confirm it really exists */
+    setStep("upload", "running", "workers.dev…");
+    var subdomain = await ensureAccountSubdomain(accountId, token);
+    setStep("upload", "running", WORKER_NAME + " · " + sizeMb + " MB");
     var metadata = {
       main_module: "worker.js",
       compatibility_date: COMPAT_DATE,
@@ -703,12 +781,17 @@ html[dir="rtl"] .detail dd{text-align:right}
     var form = new FormData();
     form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }), "metadata.json");
     form.append("worker.js", new Blob([source], { type: "application/javascript+module" }), "worker.js");
-    await api("/accounts/" + account.id + "/workers/scripts/" + WORKER_NAME, { token: token, method: "PUT", body: form });
+    await api("/accounts/" + accountId + "/workers/scripts/" + WORKER_NAME, {
+      token: token, method: "PUT", body: form, retries: 3, timeoutMs: 180000
+    });
+    if (!(await waitForScript(accountId, token))) {
+      throw new Error("Worker upload finished but the script is not visible on the account yet. Run the install again.");
+    }
     setStep("upload", "ok", WORKER_NAME);
 
     /* Password + KEY (keep them on re-install) */
     setStep("config", "running");
-    existing = await api("/accounts/" + account.id + "/storage/kv/namespaces/" + namespace.id + "/values/install.json", { token: token, allow404: true });
+    var existing = await api("/accounts/" + accountId + "/storage/kv/namespaces/" + namespace.id + "/values/install.json", { token: token, allow404: true });
     if (existing && typeof existing.ADMIN === "string" && existing.ADMIN) password = existing.ADMIN;
     if (existing && typeof existing.KEY === "string" && existing.KEY) key = existing.KEY;
     var record = Object.assign({}, existing || {}, {
@@ -718,29 +801,16 @@ html[dir="rtl"] .detail dd{text-align:right}
       installedAt: (existing && existing.installedAt) || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       installer: "NovaInstall-web",
-      installerVersion: "1.1.0"
+      installerVersion: "1.2.0"
     });
-    await api("/accounts/" + account.id + "/storage/kv/namespaces/" + namespace.id + "/values/install.json", {
-      token: token, method: "PUT", body: JSON.stringify(record)
+    await api("/accounts/" + accountId + "/storage/kv/namespaces/" + namespace.id + "/values/install.json", {
+      token: token, method: "PUT", body: JSON.stringify(record), retries: 3
     });
     setStep("config", "ok", "install.json · ADMIN · KEY");
 
-    /* Public URL */
+    /* Public URL (the Worker is guaranteed to exist now) */
     setStep("subdomain", "running");
-    var subdomain = "";
-    try {
-      var info = await api("/accounts/" + account.id + "/workers/subdomain", { token: token });
-      subdomain = (info && info.subdomain) || "";
-    } catch (e) { subdomain = ""; }
-    if (!subdomain) {
-      subdomain = "nova-" + randomSlug(6);
-      await api("/accounts/" + account.id + "/workers/subdomain", {
-        token: token, method: "PUT", body: JSON.stringify({ subdomain: subdomain })
-      });
-    }
-    await api("/accounts/" + account.id + "/workers/scripts/" + WORKER_NAME + "/subdomain", {
-      token: token, method: "PUT", body: JSON.stringify({ enabled: true })
-    });
+    await enableWorkersDev(accountId, token);
     var publicBase = "https://" + WORKER_NAME + "." + subdomain + ".workers.dev";
     setStep("subdomain", "ok", publicBase.replace(/^https:\/\//, ""));
 
@@ -753,16 +823,15 @@ html[dir="rtl"] .detail dd{text-align:right}
         var probe = await probeResponse.json();
         if (probe && probe.ok && probe.status === 200 && probe.json && probe.json.kvOk && probe.json.admin) { verified = probe.json; break; }
       } catch (e) {}
-      await new Promise(function (resolve) { setTimeout(resolve, 3000); });
+      await sleep(3000);
     }
     if (verified) setStep("verify", "ok", "install/status · kvOk");
     else setStep("verify", "skip", "edge not ready yet");
 
-    /* Result */
     state.result = {
       worker: WORKER_NAME,
       account: account.name,
-      accountId: account.id,
+      accountId: accountId,
       kv: kvTitle,
       kvId: namespace.id,
       source: WORKER_SOURCE,

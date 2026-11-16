@@ -1,843 +1,142 @@
 /**
- * NovaInstall — installer proxy + temporary bootstrap Worker.
+ * NovaInstall — installer proxy + installer UI (v2.4.0).
  *
- * The browser cannot call api.cloudflare.com (no CORS) and a 5 MB Worker
- * upload through *.workers.dev is unreliable. This Worker therefore performs
- * the heavy steps itself:
- *   - fetch _worker.js from GitHub (server side, no CORS, no Iran filtering)
- *   - register the account's workers.dev subdomain BEFORE the first upload
- *     (Cloudflare rejects uploads on subdomain-less accounts with error 10063)
- *   - upload it to Cloudflare with a known-length multipart body
- *   - create/reuse KV, write install.json, enable workers.dev, verify
- *
- * The same file is used in two ways:
- *   1. deployed as the public proxy (wrangler.toml)
- *   2. uploaded by the installer page into the user's own account as a
- *      temporary "bootstrap" Worker, so a proxy redeploy is not required.
- *
- * Routes:
- *   GET  /health              -> { ok, version, capabilities }
- *   ALL  /api/<cloudflare>    -> https://api.cloudflare.com/client/v4/<cloudflare>
- *   GET  /probe?url=...       -> { ok, status, json } for an *.workers.dev URL
- *   POST /install             -> newline-delimited JSON progress stream
- *   OPTIONS *                 -> CORS preflight
+ * The browser cannot call api.cloudflare.com (no CORS), so this Worker
+ *   - serves the installer page at "/"
+ *   - forwards Cloudflare API calls          ALL  /api/<cloudflare path>
+ *   - fetches the NovaWorker source          GET  /source   (GitHub may be blocked for the visitor)
+ *   - checks the new Worker from the server  GET  /probe?url=https://x.y.workers.dev/...
+ *   - reports its own status                 GET  /health
  *
  * Privacy: nothing is stored. The token is only forwarded to Cloudflare and is
  * never written to KV, logs or the response.
+ *
+ * Optional vars: ALLOWED_ORIGINS (comma separated; empty = any origin),
+ *                SOURCE_URL, CF_API_BASE (testing overrides).
  */
 
 const CF_API = "https://api.cloudflare.com/client/v4";
-const VERSION = "2.0.1";
+const VERSION = "2.4.0";
 const DEFAULT_SOURCE = "https://raw.githubusercontent.com/IRNova/NovaWorker/main/_worker.js";
-const FALLBACK_SOURCE = "https://cdn.jsdelivr.net/gh/IRNova/NovaWorker@main/_worker.js";
-const DEFAULT_PANEL = "https://nova-panel.github.io";
-const DEFAULT_WORKER = "nova-worker";
-const DEFAULT_COMPAT = "2025-11-04";
-const MAX_INSTALL_BODY = 64 * 1024;
-const MAX_PROXY_BODY = 12 * 1024 * 1024;
-const MAX_SOURCE_BYTES = 12 * 1024 * 1024;
-const MIN_SOURCE_BYTES = 64 * 1024;
-const MAX_PROBE_BYTES = 256 * 1024;
-const API_TIMEOUT = 30000;
-const UPLOAD_TIMEOUT = 120000;
-const SOURCE_TIMEOUT = 30000;
-const VERIFY_TRIES = 12;
-const VERIFY_DELAY = 2000;
-const SOURCE_PREFIXES = [
-  "https://raw.githubusercontent.com/IRNova/NovaWorker/",
-  "https://cdn.jsdelivr.net/gh/IRNova/NovaWorker@",
-];
+const UI_HTML = "<!doctype html>\n<html lang=\"fa\" dir=\"rtl\" data-state=\"idle\">\n<head>\n<meta charset=\"utf-8\" />\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\" />\n<meta name=\"robots\" content=\"noindex, nofollow\" />\n<!-- پروکسی ثابت است؛ کاربر چیزی وارد نمی‌کند -->\n<title>Nova Worker — نصب آسان</title>\n<link rel=\"icon\" type=\"image/svg+xml\" href=\"data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyBpZD0iTGF5ZXJfMSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB2ZXJzaW9uPSIxLjEiIHhtbG5zOnhsaW5rPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5L3hsaW5rIiB2aWV3Qm94PSIwIDAgMTI1NCAxMjU0Ij4KICA8IS0tIEdlbmVyYXRvcjogQWRvYmUgSWxsdXN0cmF0b3IgMzAuNS4xLCBTVkcgRXhwb3J0IFBsdWctSW4gLiBTVkcgVmVyc2lvbjogMi4xLjQgQnVpbGQgMykgIC0tPgogIDxkZWZzPgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJsaW5lYXItZ3JhZGllbnQiIHgxPSIxMjguMDYiIHkxPSIxMTIyLjc2IiB4Mj0iMTIwNi44NSIgeTI9IjQzLjk3IiBncmFkaWVudFVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+CiAgICAgIDxzdG9wIG9mZnNldD0iLjA0IiBzdG9wLWNvbG9yPSIjOWQ0ZWZiIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzAyY2RmMyIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHBhdGggZD0iTTExODUuNTcsMTQ5LjIzYzAtNDMuODQtMjcuNTUtODIuNi02Ni4xOS0xMDAuNy00MC44My0xOS4xMy04Ny45OC0xNi44NS0xMjYuODIsNi4xOS0zMy4zLDE5Ljc2LTU2LjIyLDU1Ljk5LTU2LjI1LDk1LjY4bC0uMzgsNjUzLjI1LjA5LDM5Ljk4Yy4wMywxMy41MS0uMzMsMjYuMzctMy44MiwzOS4xMy04LjEyLDI5LjY1LTMwLjUyLDUzLjA0LTU2LjY5LDYyLjM5LTMyLjUzLDExLjYyLTY1Ljg3LDUuNS05MS4wNy0xNS43NS0yMC42NS0xNy40Mi0zMy4yOC00Mi42NC0zMy4zMi03MC4xMWwtLjM1LTI0NS44NS4wNy0yMzEuMDVjLjA0LTE0OC44My05Ny4yNi0yODEuNDYtMjQwLjM4LTMyMS44MS02Ny40OS0xOS4wMi0xMzguNjItMTkuNjYtMjA0Ljk5LDIuNDJsLTEzLjY2LDQuNTVDMTU5Ljg0LDExNC43Miw2OC40MiwyMzkuOTksNjguNDEsMzgxLjQzbC0uMDYsNzEyLjc2YzAsNjguOTMsNTYuNDgsMTIzLjM5LDEyNC4wMywxMjQuMTUsNjUuMzEuNzMsMTI1LjU2LTUyLjE4LDEyNS42NC0xMjAuNTdsLjg4LTcxMi42M2MuMDctNTQuNjIsNDkuOTQtOTYuMjMsMTAzLjU2LTg4LjUzLDQzLjU2LDYuMjUsNzguOTYsNDMuMjMsNzkuMDgsODguMzRsMS4yNCw0OTMuOTJjLjE2LDYyLjUyLDI0LjcyLDEyMy4yOSw1OS40OSwxNzQuMjEsNDMuNyw2My45OSwxMDguNDgsMTExLjI4LDE4Mi4yNSwxMzMuOTgsOTEuNzIsMjguMjMsMTkwLjksMTYuNjgsMjczLjQtMzEuNzksMzYuODktMjEuNjgsNjguODMtNTAuMTMsOTQuOTUtODMuNDlsMTYuNTQtMjMuMTZjMzEuNzYtNDQuNDcsNTYuMjYtMTE5LjI3LDU2LjI1LTE3NC45M2wtLjA5LTcyNC40M1oiIGZpbGw9InVybCgjbGluZWFyLWdyYWRpZW50KSIvPgo8L3N2Zz4=\" />\n<style>\n:root{\n  --bg:#f4f6fb; --card:#fff; --c2:#f7f9fc; --bd:#e6eaf1; --bd2:#dde2eb;\n  --tx:#101622; --tx2:#445066; --mu:#8a93a6;\n  --ac:#0ea5c4; --ac2:#7c3aed; --ac-soft:rgba(14,165,196,.10);\n  --grad:linear-gradient(120deg,#0891b2,#7c3aed); --ring:rgba(8,145,178,.22);\n  --ok:#16a34a; --ok-soft:rgba(22,163,74,.09); --ok-bd:rgba(22,163,74,.22);\n  --dg:#e5484d; --dg-soft:rgba(229,72,77,.07); --dg-bd:rgba(229,72,77,.22);\n  --wn:#b45309; --wn-soft:rgba(180,83,9,.07); --wn-bd:rgba(180,83,9,.20);\n  --shadow:0 1px 2px rgba(20,40,80,.04),0 22px 50px rgba(40,60,110,.13);\n  --shadow-sm:0 1px 2px rgba(20,40,80,.05);\n  --mono:'JetBrains Mono','Cascadia Code',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;\n}\n*{box-sizing:border-box}\nhtml,body{margin:0;padding:0}\nbody{min-height:100vh;background:var(--bg);color:var(--tx);font-family:'Vazirmatn','Inter',system-ui,-apple-system,'Segoe UI',Tahoma,sans-serif;font-size:14px;line-height:1.8;overflow-x:clip}\nbody::before{content:\"\";position:fixed;inset:0;z-index:-2;pointer-events:none;background:radial-gradient(760px 420px at 12% -10%,rgba(14,165,196,.16),transparent 62%),radial-gradient(700px 430px at 92% 2%,rgba(124,58,237,.14),transparent 58%),radial-gradient(900px 520px at 50% 120%,rgba(14,165,196,.10),transparent 60%)}\nbody::after{content:\"\";position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.5;background-image:linear-gradient(rgba(16,22,34,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(16,22,34,.035) 1px,transparent 1px);background-size:44px 44px;-webkit-mask-image:radial-gradient(760px 620px at 50% 30%,#000 18%,transparent 78%);mask-image:radial-gradient(760px 620px at 50% 30%,#000 18%,transparent 78%)}\n.wrap{max-width:820px;margin:0 auto;padding:26px 18px 54px;position:relative;z-index:1}\n[hidden]{display:none!important}\n\n.topbar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:18px;flex-wrap:wrap}\n.brand{display:flex;align-items:center;gap:12px;min-width:0}\n.brand .lg{width:46px;height:46px;border-radius:14px;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#fff,#f6f9fd);border:1px solid var(--bd);box-shadow:0 6px 16px rgba(40,60,110,.10),inset 0 1px 0 #fff;overflow:hidden}\n.brand .lg img{width:32px;height:32px;display:block}\n.brand .bt{display:flex;flex-direction:column;line-height:1.3;min-width:0}\n.brand .bt strong{font-size:17px;font-weight:800;letter-spacing:-.3px;display:flex;align-items:center;gap:7px}\n.brand .bt small{font-size:11px;font-weight:600;color:var(--mu);letter-spacing:.4px}\n.tag{font-size:9px;font-weight:800;letter-spacing:1px;color:var(--ac2);background:rgba(124,58,237,.09);border:1px solid rgba(124,58,237,.22);padding:2px 7px;border-radius:999px}\n.lang{display:flex;gap:3px;background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:3px;box-shadow:var(--shadow-sm)}\n.lang button{border:none;background:transparent;color:var(--mu);font:inherit;font-size:12px;font-weight:700;padding:6px 11px;border-radius:9px;cursor:pointer;transition:.14s}\n.lang button:hover{color:var(--tx2)}\n.lang button.on{background:var(--grad);color:#fff;box-shadow:0 4px 12px rgba(8,145,178,.28)}\n\n.card{position:relative;background:var(--card);border:1px solid var(--bd);border-radius:20px;box-shadow:var(--shadow);padding:24px}\n.card + .card{margin-top:16px}\n.card h2{font-size:14px;font-weight:800;margin:0 0 16px;display:flex;align-items:center;gap:9px}\n.card h2 svg{width:17px;height:17px;color:var(--ac)}\n.hero{padding:30px 28px 26px;overflow:hidden}\n.hero::before{content:\"\";position:absolute;inset:0 0 auto 0;height:4px;background:var(--grad)}\nhtml[data-state=\"done\"] .hero::before{background:linear-gradient(120deg,#0891b2,#16a34a)}\nhtml[data-state=\"failed\"] .hero::before{background:linear-gradient(120deg,#e5484d,#b45309)}\n.hero-top{display:flex;align-items:flex-start;gap:16px}\n.status-ico{width:60px;height:60px;border-radius:18px;display:flex;align-items:center;justify-content:center;background:var(--ac-soft);border:1px solid rgba(14,165,196,.2);color:var(--ac);flex:0 0 auto}\n.status-ico svg{width:30px;height:30px}\nhtml[data-state=\"done\"] .status-ico{background:var(--ok-soft);border-color:var(--ok-bd);color:var(--ok)}\nhtml[data-state=\"failed\"] .status-ico{background:var(--dg-soft);border-color:var(--dg-bd);color:var(--dg)}\n.eyebrow{display:inline-flex;align-items:center;gap:7px;font-size:10.5px;font-weight:800;letter-spacing:1.1px;text-transform:uppercase;color:var(--ac);background:var(--ac-soft);border:1px solid rgba(14,165,196,.18);padding:4px 10px;border-radius:999px;margin-bottom:10px}\nh1{font-size:25px;font-weight:800;letter-spacing:-.6px;line-height:1.3;margin:0}\n.sub{margin:8px 0 0;font-size:13.5px;color:var(--tx2);max-width:60ch}\n.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}\n.chip{font-size:11.5px;font-weight:700;color:var(--tx2);background:var(--c2);border:1px solid var(--bd);padding:5px 11px;border-radius:999px;display:inline-flex;align-items:center;gap:6px}\n.chip b{color:var(--tx)}\n.chip .dotmark{width:7px;height:7px;border-radius:50%;background:var(--ok)}\n\nlabel.field{display:block;font-size:12px;font-weight:700;color:var(--tx2);margin:0 0 8px}\n.field-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}\n.field-row a{font-size:11.5px;color:var(--ac);text-decoration:none;font-weight:700}\n.field-row a:hover{text-decoration:underline}\ninput[type=text],input[type=password],select{width:100%;background:var(--c2);border:1px solid var(--bd2);border-radius:12px;padding:12px 14px;font:inherit;font-size:13.5px;color:var(--tx);outline:none;transition:.14s;direction:ltr;text-align:left}\nselect{direction:rtl;text-align:right}\ninput:focus,select:focus{border-color:var(--ac);background:#fff;box-shadow:0 0 0 4px var(--ring)}\ninput::placeholder{color:#a7afbf}\n.secret{display:flex;gap:8px}\n.secret input{flex:1;min-width:0}\n.icon-btn{width:46px;height:46px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;background:var(--card);border:1px solid var(--bd);border-radius:12px;color:var(--mu);cursor:pointer;transition:.14s;padding:0}\n.icon-btn:hover{color:var(--ac);border-color:var(--bd2)}\n.icon-btn svg{width:18px;height:18px}\n.hint{font-size:11.5px;color:var(--mu);margin:8px 0 0;line-height:1.75}\n.hint.warn{color:var(--wn)}\n.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:1px solid var(--bd);background:var(--card);color:var(--tx2);border-radius:12px;padding:11px 16px;font:inherit;font-size:13px;font-weight:800;cursor:pointer;transition:.14s;text-decoration:none}\n.btn:hover{border-color:var(--bd2);transform:translateY(-1px);box-shadow:0 9px 20px rgba(40,60,110,.10)}\n.btn svg{width:18px;height:18px;flex:0 0 auto}\n.btn-primary{background:var(--grad);border-color:transparent;color:#fff;box-shadow:0 10px 24px rgba(8,145,178,.24)}\n.btn-primary:hover{box-shadow:0 12px 28px rgba(8,145,178,.30)}\n.btn[disabled]{opacity:.7;cursor:default;transform:none;box-shadow:none}\n.btn-block{width:100%;margin-top:20px;padding:13px;font-size:14.5px}\n.spin{width:16px;height:16px;border:2px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite;display:none}\n@keyframes sp{to{transform:rotate(360deg)}}\n.btn.loading .spin{display:block}\n.btn.loading .ico{display:none}\n\n.progress-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;font-size:12.5px;font-weight:700;color:var(--tx2)}\n.progress-head .pct{font-family:var(--mono);font-size:12px;color:var(--ac);direction:ltr}\n.bar{height:9px;background:var(--c2);border:1px solid var(--bd);border-radius:999px;overflow:hidden;margin-bottom:18px}\n.bar span{display:block;height:100%;width:0;background:var(--grad);border-radius:999px;transition:width .45s ease}\n.steps{list-style:none;margin:0;padding:0}\n.step{display:grid;grid-template-columns:28px 1fr;gap:12px;padding:8px 0;border-bottom:1px dashed var(--bd)}\n.step:last-child{border-bottom:0;padding-bottom:0}\n.step:first-child{padding-top:0}\n.dot{width:26px;height:26px;border-radius:9px;display:grid;place-items:center;font-size:12px;font-weight:800;background:var(--c2);border:1px solid var(--bd);color:var(--mu);margin-top:2px}\n.step[data-status=\"ok\"] .dot{background:var(--ok-soft);border-color:var(--ok-bd);color:var(--ok)}\n.step[data-status=\"fail\"] .dot{background:var(--dg-soft);border-color:var(--dg-bd);color:var(--dg)}\n.step[data-status=\"running\"] .dot{background:var(--ac-soft);border-color:rgba(14,165,196,.25);color:var(--ac)}\n.step-name{font-size:13px;font-weight:700}\n.step-detail{font-size:11.5px;color:var(--mu);word-break:break-word}\n.step[data-status=\"fail\"] .step-detail{color:var(--dg)}\n\n.picker{margin-top:16px;padding:14px;border:1px solid var(--bd);border-radius:14px;background:var(--c2)}\n.picker .row{display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap}\n.picker select{flex:1;min-width:180px}\n.picker .btn{flex:0 0 auto}\n\n.cred{display:grid;grid-template-columns:1.1fr .9fr;gap:14px;margin-top:4px}\n.mini{background:var(--c2);border:1px solid var(--bd);border-radius:14px;padding:14px}\n.mini .lab{font-size:11px;font-weight:700;color:var(--mu);margin-bottom:7px;display:flex;align-items:center;gap:6px}\n.mini .lab svg{width:14px;height:14px;color:var(--ac)}\n.urlbox{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--bd2);border-radius:10px;padding:8px 10px;direction:ltr;min-width:0}\n.urlbox a{font-family:var(--mono);font-size:12px;color:var(--tx);text-decoration:none;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}\n.urlbox a:hover{color:var(--ac)}\n.qr-row{display:flex;align-items:center;gap:20px;margin-top:16px;flex-wrap:wrap}\n.qr-box{width:150px;height:150px;background:#fff;border:1px solid var(--bd);border-radius:14px;padding:8px;display:grid;place-items:center;box-shadow:var(--shadow-sm)}\n.qr-box img,.qr-box canvas{width:100%!important;height:100%!important}\n.details-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin:16px 0 0;padding:0}\n.detail{background:var(--c2);border:1px solid var(--bd);border-radius:12px;padding:9px 12px;min-width:0}\n.detail dt{font-size:10.5px;font-weight:700;color:var(--mu)}\n.detail dd{margin:2px 0 0;font-size:12px;font-weight:600;direction:ltr;text-align:left;word-break:break-all;font-family:var(--mono);color:var(--tx)}\nhtml[dir=\"rtl\"] .detail dd{text-align:right}\n.error{border-color:var(--dg-bd);background:linear-gradient(180deg,var(--dg-soft),var(--card))}\n.error-text{margin:0;font-size:13px;color:var(--tx);word-break:break-word}\n.error-hint{margin-top:10px;font-size:12px;color:var(--tx2);background:#fff;border:1px dashed var(--dg-bd);border-radius:10px;padding:10px 12px}\n.toast{position:fixed;left:50%;bottom:22px;transform:translate(-50%,16px);opacity:0;pointer-events:none;background:#101622;color:#fff;font-size:12.5px;font-weight:700;padding:10px 16px;border-radius:12px;box-shadow:0 14px 34px rgba(16,22,34,.28);transition:.2s;z-index:50}\n.toast.show{opacity:1;transform:translate(-50%,0)}\n.foot{margin-top:22px;display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:11.5px;color:var(--mu);flex-wrap:wrap}\n.foot a{color:var(--tx2);text-decoration:none;font-weight:700}\n.foot a:hover{color:var(--ac)}\n@media (max-width:720px){.cred{grid-template-columns:1fr}.hero{padding:26px 20px 22px}.card{padding:20px}h1{font-size:22px}}\n@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}\n</style>\n</head>\n<body>\n<div class=\"wrap\">\n  <header class=\"topbar\">\n    <div class=\"brand\">\n      <span class=\"lg\"><img src=\"data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyBpZD0iTGF5ZXJfMSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB2ZXJzaW9uPSIxLjEiIHhtbG5zOnhsaW5rPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5L3hsaW5rIiB2aWV3Qm94PSIwIDAgMTI1NCAxMjU0Ij4KICA8IS0tIEdlbmVyYXRvcjogQWRvYmUgSWxsdXN0cmF0b3IgMzAuNS4xLCBTVkcgRXhwb3J0IFBsdWctSW4gLiBTVkcgVmVyc2lvbjogMi4xLjQgQnVpbGQgMykgIC0tPgogIDxkZWZzPgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJsaW5lYXItZ3JhZGllbnQiIHgxPSIxMjguMDYiIHkxPSIxMTIyLjc2IiB4Mj0iMTIwNi44NSIgeTI9IjQzLjk3IiBncmFkaWVudFVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+CiAgICAgIDxzdG9wIG9mZnNldD0iLjA0IiBzdG9wLWNvbG9yPSIjOWQ0ZWZiIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzAyY2RmMyIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHBhdGggZD0iTTExODUuNTcsMTQ5LjIzYzAtNDMuODQtMjcuNTUtODIuNi02Ni4xOS0xMDAuNy00MC44My0xOS4xMy04Ny45OC0xNi44NS0xMjYuODIsNi4xOS0zMy4zLDE5Ljc2LTU2LjIyLDU1Ljk5LTU2LjI1LDk1LjY4bC0uMzgsNjUzLjI1LjA5LDM5Ljk4Yy4wMywxMy41MS0uMzMsMjYuMzctMy44MiwzOS4xMy04LjEyLDI5LjY1LTMwLjUyLDUzLjA0LTU2LjY5LDYyLjM5LTMyLjUzLDExLjYyLTY1Ljg3LDUuNS05MS4wNy0xNS43NS0yMC42NS0xNy40Mi0zMy4yOC00Mi42NC0zMy4zMi03MC4xMWwtLjM1LTI0NS44NS4wNy0yMzEuMDVjLjA0LTE0OC44My05Ny4yNi0yODEuNDYtMjQwLjM4LTMyMS44MS02Ny40OS0xOS4wMi0xMzguNjItMTkuNjYtMjA0Ljk5LDIuNDJsLTEzLjY2LDQuNTVDMTU5Ljg0LDExNC43Miw2OC40MiwyMzkuOTksNjguNDEsMzgxLjQzbC0uMDYsNzEyLjc2YzAsNjguOTMsNTYuNDgsMTIzLjM5LDEyNC4wMywxMjQuMTUsNjUuMzEuNzMsMTI1LjU2LTUyLjE4LDEyNS42NC0xMjAuNTdsLjg4LTcxMi42M2MuMDctNTQuNjIsNDkuOTQtOTYuMjMsMTAzLjU2LTg4LjUzLDQzLjU2LDYuMjUsNzguOTYsNDMuMjMsNzkuMDgsODguMzRsMS4yNCw0OTMuOTJjLjE2LDYyLjUyLDI0LjcyLDEyMy4yOSw1OS40OSwxNzQuMjEsNDMuNyw2My45OSwxMDguNDgsMTExLjI4LDE4Mi4yNSwxMzMuOTgsOTEuNzIsMjguMjMsMTkwLjksMTYuNjgsMjczLjQtMzEuNzksMzYuODktMjEuNjgsNjguODMtNTAuMTMsOTQuOTUtODMuNDlsMTYuNTQtMjMuMTZjMzEuNzYtNDQuNDcsNTYuMjYtMTE5LjI3LDU2LjI1LTE3NC45M2wtLjA5LTcyNC40M1oiIGZpbGw9InVybCgjbGluZWFyLWdyYWRpZW50KSIvPgo8L3N2Zz4=\" alt=\"Nova Worker\" /></span>\n      <span class=\"bt\"><strong>Nova Worker <span class=\"tag\">INSTALL</span></strong><small data-i18n=\"brandSub\">نصب‌کنندهٔ خودکار</small></span>\n    </div>\n    <div class=\"lang\" role=\"group\" aria-label=\"Language\">\n      <button type=\"button\" data-lang=\"fa\">فا</button>\n      <button type=\"button\" data-lang=\"en\">EN</button>\n      <button type=\"button\" data-lang=\"ru\">RU</button>\n    </div>\n  </header>\n\n  <section class=\"card hero\">\n    <div class=\"hero-top\">\n      <div class=\"status-ico\" aria-hidden=\"true\">\n        <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 3v12\"/><path d=\"m7 10 5 5 5-5\"/><path d=\"M5 21h14\"/></svg>\n      </div>\n      <div style=\"min-width:0\">\n        <div class=\"eyebrow\" data-i18n=\"eyebrow\">نصب در یک دقیقه</div>\n        <h1 data-i18n=\"title\">Nova Worker را نصب کن</h1>\n        <p class=\"sub\" data-i18n=\"subtitle\">فقط توکن کلودفلر را وارد کن؛ Worker، فضای KV و رمز مدیریت روی حساب خودت ساخته می‌شود.</p>\n      </div>\n    </div>\n    <div class=\"chips\">\n      <span class=\"chip\"><span class=\"dotmark\"></span><b>Cloudflare Workers</b></span>\n      <span class=\"chip\" data-i18n=\"chipKv\">KV خودکار</span>\n      <span class=\"chip\" data-i18n=\"chipPanel\">پنل فارسی</span>\n      <span class=\"chip\" data-i18n=\"chipFree\">بدون هزینه</span>\n    </div>\n  </section>\n\n  <section class=\"card\" id=\"formCard\">\n    <h2>\n      <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"3\" y=\"11\" width=\"18\" height=\"11\" rx=\"2\"/><path d=\"M7 11V7a5 5 0 0 1 10 0v4\"/></svg>\n      <span data-i18n=\"formTitle\">ورود با توکن کلودفلر</span>\n    </h2>\n    <div class=\"field-row\">\n      <label class=\"field\" for=\"token\" data-i18n=\"tokenLabel\">توکن API کلودفلر</label>\n      <a href=\"https://dash.cloudflare.com/profile/api-tokens\" target=\"_blank\" rel=\"noopener noreferrer\" data-i18n=\"tokenHelp\">ساخت توکن</a>\n    </div>\n    <div class=\"secret\">\n      <input id=\"token\" type=\"password\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"••••••••••••••••••••••••••••••••\" />\n      <button class=\"icon-btn\" type=\"button\" id=\"tokenEye\" aria-label=\"show\">\n        <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/></svg>\n      </button>\n    </div>\n    <p class=\"hint\" data-i18n=\"tokenHint\">دسترسی‌های لازم: Workers Scripts:Edit و Workers KV Storage:Edit</p>\n    <button class=\"btn btn-primary btn-block\" type=\"button\" id=\"installBtn\">\n      <span class=\"spin\"></span>\n      <svg class=\"ico\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 3v12\"/><path d=\"m7 10 5 5 5-5\"/><path d=\"M5 21h14\"/></svg>\n      <span data-i18n=\"installBtn\">شروع نصب</span>\n    </button>\n    <p class=\"hint warn\" data-i18n=\"securityNote\">توکن فقط در حافظهٔ همین مرورگر می‌ماند و برای انجام نصب به api.cloudflare.com فرستاده می‌شود؛ ذخیره نمی‌شود و به کسی نمایش داده نمی‌شود. بعد از نصب می‌توانی توکن را Revoke کنی.</p>\n  </section>\n\n  <section class=\"card\" id=\"progressCard\" hidden>\n    <h2>\n      <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M9 11l3 3L22 4\"/><path d=\"M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11\"/></svg>\n      <span data-i18n=\"progressTitle\">فرایند نصب</span>\n    </h2>\n    <div class=\"progress-head\">\n      <span id=\"progressLabel\" data-i18n=\"preparing\">در حال آماده‌سازی…</span>\n      <span class=\"pct\" id=\"progressPercent\">0%</span>\n    </div>\n    <div class=\"bar\"><span id=\"barFill\"></span></div>\n    <ol class=\"steps\" id=\"stepsList\"></ol>\n    <div class=\"picker\" id=\"accountPicker\" hidden>\n      <div class=\"hint\" style=\"margin:0\" data-i18n=\"multiAccountBody\">این توکن به چند حساب دسترسی دارد؛ حسابی که می‌خواهی نصب روی آن انجام شود را انتخاب کن.</div>\n      <div class=\"row\">\n        <select id=\"accountSelect\"></select>\n        <button class=\"btn btn-primary\" type=\"button\" id=\"resumeBtn\" data-i18n=\"resume\">ادامه نصب</button>\n      </div>\n    </div>\n  </section>\n\n  <section class=\"card error\" id=\"errorCard\" hidden>\n    <h2>\n      <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" style=\"color:var(--dg)\"><circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M12 8v4M12 16h.01\"/></svg>\n      <span data-i18n=\"errorTitle\">خطا</span>\n    </h2>\n    <p class=\"error-text\" id=\"errorText\"></p>\n    <p class=\"error-hint\" id=\"errorHint\" hidden></p>\n    <button class=\"btn\" type=\"button\" id=\"retryBtn\" style=\"margin-top:14px\" data-i18n=\"retry\">تلاش دوباره</button>\n  </section>\n\n  <section class=\"card\" id=\"resultCard\" hidden>\n    <h2>\n      <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" style=\"color:var(--ok)\"><path d=\"M9 11l3 3L22 4\"/><path d=\"M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11\"/></svg>\n      <span data-i18n=\"resultTitle\">نصب کامل شد</span>\n    </h2>\n    <div class=\"cred\">\n      <div class=\"mini\">\n        <div class=\"lab\">\n          <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11 4.93\"/><path d=\"M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07L13 19.07\"/></svg>\n          <span data-i18n=\"loginLabel\">آدرس ورود</span>\n        </div>\n        <div class=\"urlbox\">\n          <a id=\"loginUrl\" href=\"#\" target=\"_blank\" rel=\"noopener noreferrer\">-</a>\n          <button class=\"icon-btn\" type=\"button\" data-copy=\"loginUrl\" aria-label=\"copy\" style=\"width:34px;height:34px;border-radius:9px\">\n            <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"9\" y=\"9\" width=\"11\" height=\"11\" rx=\"2\"/><path d=\"M5 15V5a2 2 0 0 1 2-2h10\"/></svg>\n          </button>\n        </div>\n        <div style=\"display:flex;gap:8px;margin-top:10px\">\n          <a class=\"btn btn-primary\" id=\"openLogin\" href=\"#\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"flex:1\" data-i18n=\"open\">باز کردن</a>\n          <a class=\"btn\" id=\"openAdmin\" href=\"#\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"flex:1\" data-i18n=\"adminBtn\">پنل مدیریت</a>\n        </div>\n      </div>\n      <div class=\"mini\">\n        <div class=\"lab\">\n          <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"3\" y=\"11\" width=\"18\" height=\"11\" rx=\"2\"/><path d=\"M7 11V7a5 5 0 0 1 10 0v4\"/></svg>\n          <span data-i18n=\"passLabel\">رمز مدیریت</span>\n        </div>\n        <div class=\"secret\">\n          <input id=\"resultPassword\" type=\"text\" readonly />\n          <button class=\"icon-btn\" type=\"button\" data-copy=\"resultPassword\" aria-label=\"copy\" style=\"width:38px;height:38px;border-radius:10px\">\n            <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"9\" y=\"9\" width=\"11\" height=\"11\" rx=\"2\"/><path d=\"M5 15V5a2 2 0 0 1 2-2h10\"/></svg>\n          </button>\n        </div>\n        <p class=\"hint\" data-i18n=\"passHint\">این رمز را در جای امن نگه دار؛ تنها راه ورود به پنل است.</p>\n      </div>\n    </div>\n    <div class=\"qr-row\">\n      <div class=\"qr-box\" id=\"qrBox\"></div>\n      <div style=\"flex:1;min-width:180px\">\n        <div class=\"lab\" style=\"font-size:11px;font-weight:700;color:var(--mu)\" data-i18n=\"qrLabel\">اسکن سریع</div>\n        <p class=\"hint\" style=\"margin-top:4px\" data-i18n=\"qrHint\">با دوربین گوشی اسکن کن تا صفحهٔ ورود باز شود.</p>\n      </div>\n    </div>\n    <dl class=\"details-list\" id=\"detailsList\"></dl>\n    <p class=\"hint\" id=\"resultNote\"></p>\n    <button class=\"btn\" type=\"button\" id=\"againBtn\" style=\"margin-top:12px\" data-i18n=\"again\">نصب روی حساب دیگر</button>\n  </section>\n\n  <footer class=\"foot\">\n    <span data-i18n=\"footer\">Nova Worker · نصب آسان</span>\n    <span style=\"display:flex;gap:14px\">\n      <a href=\"https://nova-panel.github.io\" target=\"_blank\" rel=\"noopener noreferrer\">Panel</a>\n      <a href=\"https://github.com/IRNova/NovaInstall\" target=\"_blank\" rel=\"noopener noreferrer\">Installer</a>\n      <a href=\"https://github.com/IRNova/NovaWorker\" target=\"_blank\" rel=\"noopener noreferrer\">Worker</a>\n    </span>\n  </footer>\n</div>\n\n<div class=\"toast\" id=\"toast\" role=\"status\" aria-live=\"polite\"></div>\n\n<script>var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this.parsedData=[];for(var b=[],d=0,e=this.data.length;e>d;d++){var f=this.data.charCodeAt(d);f>65536?(b[0]=240|(1835008&f)>>>18,b[1]=128|(258048&f)>>>12,b[2]=128|(4032&f)>>>6,b[3]=128|63&f):f>2048?(b[0]=224|(61440&f)>>>12,b[1]=128|(4032&f)>>>6,b[2]=128|63&f):f>128?(b[0]=192|(1984&f)>>>6,b[1]=128|63&f):b[0]=f,this.parsedData=this.parsedData.concat(b)}this.parsedData.length!=this.data.length&&(this.parsedData.unshift(191),this.parsedData.unshift(187),this.parsedData.unshift(239))}function b(a,b){this.typeNumber=a,this.errorCorrectLevel=b,this.modules=null,this.moduleCount=0,this.dataCache=null,this.dataList=[]}function i(a,b){if(void 0==a.length)throw new Error(a.length+\"/\"+b);for(var c=0;c<a.length&&0==a[c];)c++;this.num=new Array(a.length-c+b);for(var d=0;d<a.length-c;d++)this.num[d]=a[d+c]}function j(a,b){this.totalCount=a,this.dataCount=b}function k(){this.buffer=[],this.length=0}function m(){return\"undefined\"!=typeof CanvasRenderingContext2D}function n(){var a=!1,b=navigator.userAgent;return/android/i.test(b)&&(a=!0,aMat=b.toString().match(/android ([0-9]\\.[0-9])/i),aMat&&aMat[1]&&(a=parseFloat(aMat[1]))),a}function r(a,b){for(var c=1,e=s(a),f=0,g=l.length;g>=f;f++){var h=0;switch(b){case d.L:h=l[f][0];break;case d.M:h=l[f][1];break;case d.Q:h=l[f][2];break;case d.H:h=l[f][3]}if(h>=e)break;c++}if(c>l.length)throw new Error(\"Too long data\");return c}function s(a){var b=encodeURI(a).toString().replace(/\\%[0-9a-fA-F]{2}/g,\"a\");return b.length+(b.length!=a?3:0)}a.prototype={getLength:function(){return this.parsedData.length},write:function(a){for(var b=0,c=this.parsedData.length;c>b;b++)a.put(this.parsedData[b],8)}},b.prototype={addData:function(b){var c=new a(b);this.dataList.push(c),this.dataCache=null},isDark:function(a,b){if(0>a||this.moduleCount<=a||0>b||this.moduleCount<=b)throw new Error(a+\",\"+b);return this.modules[a][b]},getModuleCount:function(){return this.moduleCount},make:function(){this.makeImpl(!1,this.getBestMaskPattern())},makeImpl:function(a,c){this.moduleCount=4*this.typeNumber+17,this.modules=new Array(this.moduleCount);for(var d=0;d<this.moduleCount;d++){this.modules[d]=new Array(this.moduleCount);for(var e=0;e<this.moduleCount;e++)this.modules[d][e]=null}this.setupPositionProbePattern(0,0),this.setupPositionProbePattern(this.moduleCount-7,0),this.setupPositionProbePattern(0,this.moduleCount-7),this.setupPositionAdjustPattern(),this.setupTimingPattern(),this.setupTypeInfo(a,c),this.typeNumber>=7&&this.setupTypeNumber(a),null==this.dataCache&&(this.dataCache=b.createData(this.typeNumber,this.errorCorrectLevel,this.dataList)),this.mapData(this.dataCache,c)},setupPositionProbePattern:function(a,b){for(var c=-1;7>=c;c++)if(!(-1>=a+c||this.moduleCount<=a+c))for(var d=-1;7>=d;d++)-1>=b+d||this.moduleCount<=b+d||(this.modules[a+c][b+d]=c>=0&&6>=c&&(0==d||6==d)||d>=0&&6>=d&&(0==c||6==c)||c>=2&&4>=c&&d>=2&&4>=d?!0:!1)},getBestMaskPattern:function(){for(var a=0,b=0,c=0;8>c;c++){this.makeImpl(!0,c);var d=f.getLostPoint(this);(0==c||a>d)&&(a=d,b=c)}return b},createMovieClip:function(a,b,c){var d=a.createEmptyMovieClip(b,c),e=1;this.make();for(var f=0;f<this.modules.length;f++)for(var g=f*e,h=0;h<this.modules[f].length;h++){var i=h*e,j=this.modules[f][h];j&&(d.beginFill(0,100),d.moveTo(i,g),d.lineTo(i+e,g),d.lineTo(i+e,g+e),d.lineTo(i,g+e),d.endFill())}return d},setupTimingPattern:function(){for(var a=8;a<this.moduleCount-8;a++)null==this.modules[a][6]&&(this.modules[a][6]=0==a%2);for(var b=8;b<this.moduleCount-8;b++)null==this.modules[6][b]&&(this.modules[6][b]=0==b%2)},setupPositionAdjustPattern:function(){for(var a=f.getPatternPosition(this.typeNumber),b=0;b<a.length;b++)for(var c=0;c<a.length;c++){var d=a[b],e=a[c];if(null==this.modules[d][e])for(var g=-2;2>=g;g++)for(var h=-2;2>=h;h++)this.modules[d+g][e+h]=-2==g||2==g||-2==h||2==h||0==g&&0==h?!0:!1}},setupTypeNumber:function(a){for(var b=f.getBCHTypeNumber(this.typeNumber),c=0;18>c;c++){var d=!a&&1==(1&b>>c);this.modules[Math.floor(c/3)][c%3+this.moduleCount-8-3]=d}for(var c=0;18>c;c++){var d=!a&&1==(1&b>>c);this.modules[c%3+this.moduleCount-8-3][Math.floor(c/3)]=d}},setupTypeInfo:function(a,b){for(var c=this.errorCorrectLevel<<3|b,d=f.getBCHTypeInfo(c),e=0;15>e;e++){var g=!a&&1==(1&d>>e);6>e?this.modules[e][8]=g:8>e?this.modules[e+1][8]=g:this.modules[this.moduleCount-15+e][8]=g}for(var e=0;15>e;e++){var g=!a&&1==(1&d>>e);8>e?this.modules[8][this.moduleCount-e-1]=g:9>e?this.modules[8][15-e-1+1]=g:this.modules[8][15-e-1]=g}this.modules[this.moduleCount-8][8]=!a},mapData:function(a,b){for(var c=-1,d=this.moduleCount-1,e=7,g=0,h=this.moduleCount-1;h>0;h-=2)for(6==h&&h--;;){for(var i=0;2>i;i++)if(null==this.modules[d][h-i]){var j=!1;g<a.length&&(j=1==(1&a[g]>>>e));var k=f.getMask(b,d,h-i);k&&(j=!j),this.modules[d][h-i]=j,e--,-1==e&&(g++,e=7)}if(d+=c,0>d||this.moduleCount<=d){d-=c,c=-c;break}}}},b.PAD0=236,b.PAD1=17,b.createData=function(a,c,d){for(var e=j.getRSBlocks(a,c),g=new k,h=0;h<d.length;h++){var i=d[h];g.put(i.mode,4),g.put(i.getLength(),f.getLengthInBits(i.mode,a)),i.write(g)}for(var l=0,h=0;h<e.length;h++)l+=e[h].dataCount;if(g.getLengthInBits()>8*l)throw new Error(\"code length overflow. (\"+g.getLengthInBits()+\">\"+8*l+\")\");for(g.getLengthInBits()+4<=8*l&&g.put(0,4);0!=g.getLengthInBits()%8;)g.putBit(!1);for(;;){if(g.getLengthInBits()>=8*l)break;if(g.put(b.PAD0,8),g.getLengthInBits()>=8*l)break;g.put(b.PAD1,8)}return b.createBytes(g,e)},b.createBytes=function(a,b){for(var c=0,d=0,e=0,g=new Array(b.length),h=new Array(b.length),j=0;j<b.length;j++){var k=b[j].dataCount,l=b[j].totalCount-k;d=Math.max(d,k),e=Math.max(e,l),g[j]=new Array(k);for(var m=0;m<g[j].length;m++)g[j][m]=255&a.buffer[m+c];c+=k;var n=f.getErrorCorrectPolynomial(l),o=new i(g[j],n.getLength()-1),p=o.mod(n);h[j]=new Array(n.getLength()-1);for(var m=0;m<h[j].length;m++){var q=m+p.getLength()-h[j].length;h[j][m]=q>=0?p.get(q):0}}for(var r=0,m=0;m<b.length;m++)r+=b[m].totalCount;for(var s=new Array(r),t=0,m=0;d>m;m++)for(var j=0;j<b.length;j++)m<g[j].length&&(s[t++]=g[j][m]);for(var m=0;e>m;m++)for(var j=0;j<b.length;j++)m<h[j].length&&(s[t++]=h[j][m]);return s};for(var c={MODE_NUMBER:1,MODE_ALPHA_NUM:2,MODE_8BIT_BYTE:4,MODE_KANJI:8},d={L:1,M:0,Q:3,H:2},e={PATTERN000:0,PATTERN001:1,PATTERN010:2,PATTERN011:3,PATTERN100:4,PATTERN101:5,PATTERN110:6,PATTERN111:7},f={PATTERN_POSITION_TABLE:[[],[6,18],[6,22],[6,26],[6,30],[6,34],[6,22,38],[6,24,42],[6,26,46],[6,28,50],[6,30,54],[6,32,58],[6,34,62],[6,26,46,66],[6,26,48,70],[6,26,50,74],[6,30,54,78],[6,30,56,82],[6,30,58,86],[6,34,62,90],[6,28,50,72,94],[6,26,50,74,98],[6,30,54,78,102],[6,28,54,80,106],[6,32,58,84,110],[6,30,58,86,114],[6,34,62,90,118],[6,26,50,74,98,122],[6,30,54,78,102,126],[6,26,52,78,104,130],[6,30,56,82,108,134],[6,34,60,86,112,138],[6,30,58,86,114,142],[6,34,62,90,118,146],[6,30,54,78,102,126,150],[6,24,50,76,102,128,154],[6,28,54,80,106,132,158],[6,32,58,84,110,136,162],[6,26,54,82,110,138,166],[6,30,58,86,114,142,170]],G15:1335,G18:7973,G15_MASK:21522,getBCHTypeInfo:function(a){for(var b=a<<10;f.getBCHDigit(b)-f.getBCHDigit(f.G15)>=0;)b^=f.G15<<f.getBCHDigit(b)-f.getBCHDigit(f.G15);return(a<<10|b)^f.G15_MASK},getBCHTypeNumber:function(a){for(var b=a<<12;f.getBCHDigit(b)-f.getBCHDigit(f.G18)>=0;)b^=f.G18<<f.getBCHDigit(b)-f.getBCHDigit(f.G18);return a<<12|b},getBCHDigit:function(a){for(var b=0;0!=a;)b++,a>>>=1;return b},getPatternPosition:function(a){return f.PATTERN_POSITION_TABLE[a-1]},getMask:function(a,b,c){switch(a){case e.PATTERN000:return 0==(b+c)%2;case e.PATTERN001:return 0==b%2;case e.PATTERN010:return 0==c%3;case e.PATTERN011:return 0==(b+c)%3;case e.PATTERN100:return 0==(Math.floor(b/2)+Math.floor(c/3))%2;case e.PATTERN101:return 0==b*c%2+b*c%3;case e.PATTERN110:return 0==(b*c%2+b*c%3)%2;case e.PATTERN111:return 0==(b*c%3+(b+c)%2)%2;default:throw new Error(\"bad maskPattern:\"+a)}},getErrorCorrectPolynomial:function(a){for(var b=new i([1],0),c=0;a>c;c++)b=b.multiply(new i([1,g.gexp(c)],0));return b},getLengthInBits:function(a,b){if(b>=1&&10>b)switch(a){case c.MODE_NUMBER:return 10;case c.MODE_ALPHA_NUM:return 9;case c.MODE_8BIT_BYTE:return 8;case c.MODE_KANJI:return 8;default:throw new Error(\"mode:\"+a)}else if(27>b)switch(a){case c.MODE_NUMBER:return 12;case c.MODE_ALPHA_NUM:return 11;case c.MODE_8BIT_BYTE:return 16;case c.MODE_KANJI:return 10;default:throw new Error(\"mode:\"+a)}else{if(!(41>b))throw new Error(\"type:\"+b);switch(a){case c.MODE_NUMBER:return 14;case c.MODE_ALPHA_NUM:return 13;case c.MODE_8BIT_BYTE:return 16;case c.MODE_KANJI:return 12;default:throw new Error(\"mode:\"+a)}}},getLostPoint:function(a){for(var b=a.getModuleCount(),c=0,d=0;b>d;d++)for(var e=0;b>e;e++){for(var f=0,g=a.isDark(d,e),h=-1;1>=h;h++)if(!(0>d+h||d+h>=b))for(var i=-1;1>=i;i++)0>e+i||e+i>=b||(0!=h||0!=i)&&g==a.isDark(d+h,e+i)&&f++;f>5&&(c+=3+f-5)}for(var d=0;b-1>d;d++)for(var e=0;b-1>e;e++){var j=0;a.isDark(d,e)&&j++,a.isDark(d+1,e)&&j++,a.isDark(d,e+1)&&j++,a.isDark(d+1,e+1)&&j++,(0==j||4==j)&&(c+=3)}for(var d=0;b>d;d++)for(var e=0;b-6>e;e++)a.isDark(d,e)&&!a.isDark(d,e+1)&&a.isDark(d,e+2)&&a.isDark(d,e+3)&&a.isDark(d,e+4)&&!a.isDark(d,e+5)&&a.isDark(d,e+6)&&(c+=40);for(var e=0;b>e;e++)for(var d=0;b-6>d;d++)a.isDark(d,e)&&!a.isDark(d+1,e)&&a.isDark(d+2,e)&&a.isDark(d+3,e)&&a.isDark(d+4,e)&&!a.isDark(d+5,e)&&a.isDark(d+6,e)&&(c+=40);for(var k=0,e=0;b>e;e++)for(var d=0;b>d;d++)a.isDark(d,e)&&k++;var l=Math.abs(100*k/b/b-50)/5;return c+=10*l}},g={glog:function(a){if(1>a)throw new Error(\"glog(\"+a+\")\");return g.LOG_TABLE[a]},gexp:function(a){for(;0>a;)a+=255;for(;a>=256;)a-=255;return g.EXP_TABLE[a]},EXP_TABLE:new Array(256),LOG_TABLE:new Array(256)},h=0;8>h;h++)g.EXP_TABLE[h]=1<<h;for(var h=8;256>h;h++)g.EXP_TABLE[h]=g.EXP_TABLE[h-4]^g.EXP_TABLE[h-5]^g.EXP_TABLE[h-6]^g.EXP_TABLE[h-8];for(var h=0;255>h;h++)g.LOG_TABLE[g.EXP_TABLE[h]]=h;i.prototype={get:function(a){return this.num[a]},getLength:function(){return this.num.length},multiply:function(a){for(var b=new Array(this.getLength()+a.getLength()-1),c=0;c<this.getLength();c++)for(var d=0;d<a.getLength();d++)b[c+d]^=g.gexp(g.glog(this.get(c))+g.glog(a.get(d)));return new i(b,0)},mod:function(a){if(this.getLength()-a.getLength()<0)return this;for(var b=g.glog(this.get(0))-g.glog(a.get(0)),c=new Array(this.getLength()),d=0;d<this.getLength();d++)c[d]=this.get(d);for(var d=0;d<a.getLength();d++)c[d]^=g.gexp(g.glog(a.get(d))+b);return new i(c,0).mod(a)}},j.RS_BLOCK_TABLE=[[1,26,19],[1,26,16],[1,26,13],[1,26,9],[1,44,34],[1,44,28],[1,44,22],[1,44,16],[1,70,55],[1,70,44],[2,35,17],[2,35,13],[1,100,80],[2,50,32],[2,50,24],[4,25,9],[1,134,108],[2,67,43],[2,33,15,2,34,16],[2,33,11,2,34,12],[2,86,68],[4,43,27],[4,43,19],[4,43,15],[2,98,78],[4,49,31],[2,32,14,4,33,15],[4,39,13,1,40,14],[2,121,97],[2,60,38,2,61,39],[4,40,18,2,41,19],[4,40,14,2,41,15],[2,146,116],[3,58,36,2,59,37],[4,36,16,4,37,17],[4,36,12,4,37,13],[2,86,68,2,87,69],[4,69,43,1,70,44],[6,43,19,2,44,20],[6,43,15,2,44,16],[4,101,81],[1,80,50,4,81,51],[4,50,22,4,51,23],[3,36,12,8,37,13],[2,116,92,2,117,93],[6,58,36,2,59,37],[4,46,20,6,47,21],[7,42,14,4,43,15],[4,133,107],[8,59,37,1,60,38],[8,44,20,4,45,21],[12,33,11,4,34,12],[3,145,115,1,146,116],[4,64,40,5,65,41],[11,36,16,5,37,17],[11,36,12,5,37,13],[5,109,87,1,110,88],[5,65,41,5,66,42],[5,54,24,7,55,25],[11,36,12],[5,122,98,1,123,99],[7,73,45,3,74,46],[15,43,19,2,44,20],[3,45,15,13,46,16],[1,135,107,5,136,108],[10,74,46,1,75,47],[1,50,22,15,51,23],[2,42,14,17,43,15],[5,150,120,1,151,121],[9,69,43,4,70,44],[17,50,22,1,51,23],[2,42,14,19,43,15],[3,141,113,4,142,114],[3,70,44,11,71,45],[17,47,21,4,48,22],[9,39,13,16,40,14],[3,135,107,5,136,108],[3,67,41,13,68,42],[15,54,24,5,55,25],[15,43,15,10,44,16],[4,144,116,4,145,117],[17,68,42],[17,50,22,6,51,23],[19,46,16,6,47,17],[2,139,111,7,140,112],[17,74,46],[7,54,24,16,55,25],[34,37,13],[4,151,121,5,152,122],[4,75,47,14,76,48],[11,54,24,14,55,25],[16,45,15,14,46,16],[6,147,117,4,148,118],[6,73,45,14,74,46],[11,54,24,16,55,25],[30,46,16,2,47,17],[8,132,106,4,133,107],[8,75,47,13,76,48],[7,54,24,22,55,25],[22,45,15,13,46,16],[10,142,114,2,143,115],[19,74,46,4,75,47],[28,50,22,6,51,23],[33,46,16,4,47,17],[8,152,122,4,153,123],[22,73,45,3,74,46],[8,53,23,26,54,24],[12,45,15,28,46,16],[3,147,117,10,148,118],[3,73,45,23,74,46],[4,54,24,31,55,25],[11,45,15,31,46,16],[7,146,116,7,147,117],[21,73,45,7,74,46],[1,53,23,37,54,24],[19,45,15,26,46,16],[5,145,115,10,146,116],[19,75,47,10,76,48],[15,54,24,25,55,25],[23,45,15,25,46,16],[13,145,115,3,146,116],[2,74,46,29,75,47],[42,54,24,1,55,25],[23,45,15,28,46,16],[17,145,115],[10,74,46,23,75,47],[10,54,24,35,55,25],[19,45,15,35,46,16],[17,145,115,1,146,116],[14,74,46,21,75,47],[29,54,24,19,55,25],[11,45,15,46,46,16],[13,145,115,6,146,116],[14,74,46,23,75,47],[44,54,24,7,55,25],[59,46,16,1,47,17],[12,151,121,7,152,122],[12,75,47,26,76,48],[39,54,24,14,55,25],[22,45,15,41,46,16],[6,151,121,14,152,122],[6,75,47,34,76,48],[46,54,24,10,55,25],[2,45,15,64,46,16],[17,152,122,4,153,123],[29,74,46,14,75,47],[49,54,24,10,55,25],[24,45,15,46,46,16],[4,152,122,18,153,123],[13,74,46,32,75,47],[48,54,24,14,55,25],[42,45,15,32,46,16],[20,147,117,4,148,118],[40,75,47,7,76,48],[43,54,24,22,55,25],[10,45,15,67,46,16],[19,148,118,6,149,119],[18,75,47,31,76,48],[34,54,24,34,55,25],[20,45,15,61,46,16]],j.getRSBlocks=function(a,b){var c=j.getRsBlockTable(a,b);if(void 0==c)throw new Error(\"bad rs block @ typeNumber:\"+a+\"/errorCorrectLevel:\"+b);for(var d=c.length/3,e=[],f=0;d>f;f++)for(var g=c[3*f+0],h=c[3*f+1],i=c[3*f+2],k=0;g>k;k++)e.push(new j(h,i));return e},j.getRsBlockTable=function(a,b){switch(b){case d.L:return j.RS_BLOCK_TABLE[4*(a-1)+0];case d.M:return j.RS_BLOCK_TABLE[4*(a-1)+1];case d.Q:return j.RS_BLOCK_TABLE[4*(a-1)+2];case d.H:return j.RS_BLOCK_TABLE[4*(a-1)+3];default:return void 0}},k.prototype={get:function(a){var b=Math.floor(a/8);return 1==(1&this.buffer[b]>>>7-a%8)},put:function(a,b){for(var c=0;b>c;c++)this.putBit(1==(1&a>>>b-c-1))},getLengthInBits:function(){return this.length},putBit:function(a){var b=Math.floor(this.length/8);this.buffer.length<=b&&this.buffer.push(0),a&&(this.buffer[b]|=128>>>this.length%8),this.length++}};var l=[[17,14,11,7],[32,26,20,14],[53,42,32,24],[78,62,46,34],[106,84,60,44],[134,106,74,58],[154,122,86,64],[192,152,108,84],[230,180,130,98],[271,213,151,119],[321,251,177,137],[367,287,203,155],[425,331,241,177],[458,362,258,194],[520,412,292,220],[586,450,322,250],[644,504,364,280],[718,560,394,310],[792,624,442,338],[858,666,482,382],[929,711,509,403],[1003,779,565,439],[1091,857,611,461],[1171,911,661,511],[1273,997,715,535],[1367,1059,751,593],[1465,1125,805,625],[1528,1190,868,658],[1628,1264,908,698],[1732,1370,982,742],[1840,1452,1030,790],[1952,1538,1112,842],[2068,1628,1168,898],[2188,1722,1228,958],[2303,1809,1283,983],[2431,1911,1351,1051],[2563,1989,1423,1093],[2699,2099,1499,1139],[2809,2213,1579,1219],[2953,2331,1663,1273]],o=function(){var a=function(a,b){this._el=a,this._htOption=b};return a.prototype.draw=function(a){function g(a,b){var c=document.createElementNS(\"http://www.w3.org/2000/svg\",a);for(var d in b)b.hasOwnProperty(d)&&c.setAttribute(d,b[d]);return c}var b=this._htOption,c=this._el,d=a.getModuleCount();Math.floor(b.width/d),Math.floor(b.height/d),this.clear();var h=g(\"svg\",{viewBox:\"0 0 \"+String(d)+\" \"+String(d),width:\"100%\",height:\"100%\",fill:b.colorLight});h.setAttributeNS(\"http://www.w3.org/2000/xmlns/\",\"xmlns:xlink\",\"http://www.w3.org/1999/xlink\"),c.appendChild(h),h.appendChild(g(\"rect\",{fill:b.colorDark,width:\"1\",height:\"1\",id:\"template\"}));for(var i=0;d>i;i++)for(var j=0;d>j;j++)if(a.isDark(i,j)){var k=g(\"use\",{x:String(i),y:String(j)});k.setAttributeNS(\"http://www.w3.org/1999/xlink\",\"href\",\"#template\"),h.appendChild(k)}},a.prototype.clear=function(){for(;this._el.hasChildNodes();)this._el.removeChild(this._el.lastChild)},a}(),p=\"svg\"===document.documentElement.tagName.toLowerCase(),q=p?o:m()?function(){function a(){this._elImage.src=this._elCanvas.toDataURL(\"image/png\"),this._elImage.style.display=\"block\",this._elCanvas.style.display=\"none\"}function d(a,b){var c=this;if(c._fFail=b,c._fSuccess=a,null===c._bSupportDataURI){var d=document.createElement(\"img\"),e=function(){c._bSupportDataURI=!1,c._fFail&&_fFail.call(c)},f=function(){c._bSupportDataURI=!0,c._fSuccess&&c._fSuccess.call(c)};return d.onabort=e,d.onerror=e,d.onload=f,d.src=\"data:image/gif;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg==\",void 0}c._bSupportDataURI===!0&&c._fSuccess?c._fSuccess.call(c):c._bSupportDataURI===!1&&c._fFail&&c._fFail.call(c)}if(this._android&&this._android<=2.1){var b=1/window.devicePixelRatio,c=CanvasRenderingContext2D.prototype.drawImage;CanvasRenderingContext2D.prototype.drawImage=function(a,d,e,f,g,h,i,j){if(\"nodeName\"in a&&/img/i.test(a.nodeName))for(var l=arguments.length-1;l>=1;l--)arguments[l]=arguments[l]*b;else\"undefined\"==typeof j&&(arguments[1]*=b,arguments[2]*=b,arguments[3]*=b,arguments[4]*=b);c.apply(this,arguments)}}var e=function(a,b){this._bIsPainted=!1,this._android=n(),this._htOption=b,this._elCanvas=document.createElement(\"canvas\"),this._elCanvas.width=b.width,this._elCanvas.height=b.height,a.appendChild(this._elCanvas),this._el=a,this._oContext=this._elCanvas.getContext(\"2d\"),this._bIsPainted=!1,this._elImage=document.createElement(\"img\"),this._elImage.style.display=\"none\",this._el.appendChild(this._elImage),this._bSupportDataURI=null};return e.prototype.draw=function(a){var b=this._elImage,c=this._oContext,d=this._htOption,e=a.getModuleCount(),f=d.width/e,g=d.height/e,h=Math.round(f),i=Math.round(g);b.style.display=\"none\",this.clear();for(var j=0;e>j;j++)for(var k=0;e>k;k++){var l=a.isDark(j,k),m=k*f,n=j*g;c.strokeStyle=l?d.colorDark:d.colorLight,c.lineWidth=1,c.fillStyle=l?d.colorDark:d.colorLight,c.fillRect(m,n,f,g),c.strokeRect(Math.floor(m)+.5,Math.floor(n)+.5,h,i),c.strokeRect(Math.ceil(m)-.5,Math.ceil(n)-.5,h,i)}this._bIsPainted=!0},e.prototype.makeImage=function(){this._bIsPainted&&d.call(this,a)},e.prototype.isPainted=function(){return this._bIsPainted},e.prototype.clear=function(){this._oContext.clearRect(0,0,this._elCanvas.width,this._elCanvas.height),this._bIsPainted=!1},e.prototype.round=function(a){return a?Math.floor(1e3*a)/1e3:a},e}():function(){var a=function(a,b){this._el=a,this._htOption=b};return a.prototype.draw=function(a){for(var b=this._htOption,c=this._el,d=a.getModuleCount(),e=Math.floor(b.width/d),f=Math.floor(b.height/d),g=['<table style=\"border:0;border-collapse:collapse;\">'],h=0;d>h;h++){g.push(\"<tr>\");for(var i=0;d>i;i++)g.push('<td style=\"border:0;border-collapse:collapse;padding:0;margin:0;width:'+e+\"px;height:\"+f+\"px;background-color:\"+(a.isDark(h,i)?b.colorDark:b.colorLight)+';\"></td>');g.push(\"</tr>\")}g.push(\"</table>\"),c.innerHTML=g.join(\"\");var j=c.childNodes[0],k=(b.width-j.offsetWidth)/2,l=(b.height-j.offsetHeight)/2;k>0&&l>0&&(j.style.margin=l+\"px \"+k+\"px\")},a.prototype.clear=function(){this._el.innerHTML=\"\"},a}();QRCode=function(a,b){if(this._htOption={width:256,height:256,typeNumber:4,colorDark:\"#000000\",colorLight:\"#ffffff\",correctLevel:d.H},\"string\"==typeof b&&(b={text:b}),b)for(var c in b)this._htOption[c]=b[c];\"string\"==typeof a&&(a=document.getElementById(a)),this._android=n(),this._el=a,this._oQRCode=null,this._oDrawing=new q(this._el,this._htOption),this._htOption.text&&this.makeCode(this._htOption.text)},QRCode.prototype.makeCode=function(a){this._oQRCode=new b(r(a,this._htOption.correctLevel),this._htOption.correctLevel),this._oQRCode.addData(a),this._oQRCode.make(),this._el.title=a,this._oDrawing.draw(this._oQRCode),this.makeImage()},QRCode.prototype.makeImage=function(){\"function\"==typeof this._oDrawing.makeImage&&(!this._android||this._android>=3)&&this._oDrawing.makeImage()},QRCode.prototype.clear=function(){this._oDrawing.clear()},QRCode.CorrectLevel=d}();</script>\n<script>\n(function () {\n  \"use strict\";\n\n  /* همه‌چیز داخل کد ثابت است؛ کاربر فقط توکن می‌دهد. */\n  var PROXY_URL = \"\";  /* same origin */\n  var WORKER_NAME = \"nova-worker\";\n  var PANEL_URL = \"https://nova-panel.github.io\";\n  var COMPAT_DATE = \"2025-11-04\";\n  var WORKER_SOURCE = \"https://raw.githubusercontent.com/IRNova/NovaWorker/main/_worker.js\";\n\n  var metaProxy = document.querySelector('meta[name=\"nova-proxy\"]');\n  if (metaProxy && metaProxy.content && /^https?:\\/\\//.test(metaProxy.content)) {\n    PROXY_URL = metaProxy.content.trim().replace(/\\/+$/, \"\");\n  }\n\n  var STEPS = [\"auth\", \"account\", \"kv\", \"source\", \"upload\", \"config\", \"subdomain\", \"verify\"];\n  var STEP_ICON = { ok: \"✓\", fail: \"✕\", skip: \"–\", running: \"…\", pending: \"·\" };\n\n  var I18N = {\n    fa: {\n      brandSub: \"نصب‌کنندهٔ خودکار\", eyebrow: \"نصب در یک دقیقه\",\n      title: \"Nova Worker را نصب کن\",\n      subtitle: \"فقط توکن کلودفلر را وارد کن؛ Worker، فضای KV و رمز مدیریت روی حساب خودت ساخته می‌شود.\",\n      chipKv: \"KV خودکار\", chipPanel: \"پنل فارسی\", chipFree: \"بدون هزینه\",\n      formTitle: \"ورود با توکن کلودفلر\", tokenLabel: \"توکن API کلودفلر\", tokenHelp: \"ساخت توکن\",\n      tokenHint: \"دسترسی‌های لازم: Workers Scripts:Edit و Workers KV Storage:Edit\",\n      installBtn: \"شروع نصب\",\n      securityNote: \"توکن فقط در حافظهٔ همین مرورگر می‌ماند و برای انجام نصب به api.cloudflare.com فرستاده می‌شود؛ ذخیره نمی‌شود و به کسی نمایش داده نمی‌شود. بعد از نصب می‌توانی توکن را Revoke کنی.\",\n      progressTitle: \"فرایند نصب\", preparing: \"در حال آماده‌سازی…\",\n      resultTitle: \"نصب کامل شد\", loginLabel: \"آدرس ورود\", passLabel: \"رمز مدیریت\",\n      passHint: \"این رمز را در جای امن نگه دار؛ تنها راه ورود به پنل است.\",\n      open: \"باز کردن\", adminBtn: \"پنل مدیریت\", qrLabel: \"اسکن سریع\",\n      qrHint: \"با دوربین گوشی اسکن کن تا صفحهٔ ورود باز شود.\",\n      errorTitle: \"خطا\", retry: \"تلاش دوباره\", copied: \"کپی شد\", footer: \"Nova Worker · نصب آسان\",\n      again: \"نصب روی حساب دیگر\",\n      emptyToken: \"توکن API را وارد کن.\", tokenInvalid: \"توکن معتبر نیست یا دسترسی لازم را ندارد.\",\n      authInvalid: \"توکن نامعتبر است یا منقضی شده؛ یک توکن جدید با دسترسی Workers Scripts:Edit و Workers KV Storage:Edit بساز.\",\n      multiAccountBody: \"این توکن به چند حساب دسترسی دارد؛ حسابی که می‌خواهی نصب روی آن انجام شود را انتخاب کن.\",\n      resume: \"ادامه نصب\", done: \"نصب با موفقیت انجام شد.\", verifyPending: \"Worker نصب شد اما هنوز لبه پاسخ نمی‌دهد؛ چند دقیقه بعد آدرس ورود را باز کن.\",\n      details: { worker: \"نام Worker\", version: \"نسخه\", build: \"بیلد\", account: \"حساب\", kv: \"فضای KV\", source: \"منبع سورس\" },\n      stepNames: { auth: \"اتصال به کلودفلر\", account: \"انتخاب حساب\", kv: \"ساخت فضای KV\", source: \"دانلود سورس Worker\", upload: \"آپلود Worker\", config: \"تنظیم رمز و کانفیگ\", subdomain: \"فعال‌سازی آدرس عمومی\", verify: \"راستی‌آزمایی نصب\" },\n      stepStatus: { pending: \"در انتظار\", running: \"در حال اجرا\", ok: \"موفق\", fail: \"ناموفق\", skip: \"رد شد\" },\n      errorHints: {\n        auth: \"توکن باید Workers Scripts:Edit و Workers KV Storage:Edit داشته باشد. توکن را از My Profile → API Tokens بساز.\",\n        account: \"توکن به این حساب دسترسی ندارد؛ حساب دیگری را انتخاب کن یا توکن را با دسترسی درست بساز.\",\n        kv: \"ساخت فضای KV ناموفق بود؛ سهمیهٔ KV یا مجوز توکن را بررسی کن.\",\n        source: \"دانلود سورس Worker از GitHub ناموفق بود؛ اتصال شبکه را بررسی کن.\",\n        upload: \"آپلود Worker ناموفق بود؛ مجوز Workers Scripts و حجم سورس را بررسی کن.\",\n        config: \"نوشتن رمز در KV ناموفق بود.\",\n        subdomain: \"فعال‌سازی workers.dev ناموفق بود؛ شاید حساب به ساب‌دامین نیاز دارد.\",\n        verify: \"Worker بالا آمد اما پاسخ نداد؛ چند دقیقه بعد دوباره تلاش کن.\"\n      }\n    },\n    en: {\n      brandSub: \"Automatic installer\", eyebrow: \"One-minute install\",\n      title: \"Install Nova Worker\",\n      subtitle: \"Only paste your Cloudflare token; the Worker, KV storage and admin password are created in your account.\",\n      chipKv: \"Automatic KV\", chipPanel: \"Persian panel\", chipFree: \"No cost\",\n      formTitle: \"Sign in with a Cloudflare token\", tokenLabel: \"Cloudflare API token\", tokenHelp: \"Create token\",\n      tokenHint: \"Required scopes: Workers Scripts:Edit and Workers KV Storage:Edit\",\n      installBtn: \"Start install\",\n      securityNote: \"The token stays in this browser and is sent only to api.cloudflare.com to perform the install; it is not stored or shown to anyone. Revoke it after the install.\",\n      progressTitle: \"Installing\", preparing: \"Preparing…\",\n      resultTitle: \"Installation complete\", loginLabel: \"Login URL\", passLabel: \"Admin password\",\n      passHint: \"Keep this password safe; it is the only way into the panel.\",\n      open: \"Open\", adminBtn: \"Admin panel\", qrLabel: \"Quick scan\",\n      qrHint: \"Scan with your phone camera to open the login page.\",\n      errorTitle: \"Error\", retry: \"Try again\", copied: \"Copied\", footer: \"Nova Worker · easy install\",\n      again: \"Install another account\",\n      emptyToken: \"Enter your API token.\", tokenInvalid: \"The token is invalid or lacks permissions.\",\n      authInvalid: \"The token is invalid or expired; create a new one with Workers Scripts:Edit and Workers KV Storage:Edit.\",\n      multiAccountBody: \"This token can access several accounts; choose the one to install into.\",\n      resume: \"Continue install\", done: \"Installed successfully.\", verifyPending: \"The Worker is deployed but the edge is not answering yet; open the login URL in a minute.\",\n      details: { worker: \"Worker\", version: \"Version\", build: \"Build\", account: \"Account\", kv: \"KV namespace\", source: \"Source\" },\n      stepNames: { auth: \"Connecting to Cloudflare\", account: \"Selecting account\", kv: \"Creating KV namespace\", source: \"Downloading Worker source\", upload: \"Uploading Worker\", config: \"Writing password and config\", subdomain: \"Enabling public URL\", verify: \"Verifying deployment\" },\n      stepStatus: { pending: \"Pending\", running: \"Running\", ok: \"Done\", fail: \"Failed\", skip: \"Skipped\" },\n      errorHints: {\n        auth: \"The token needs Workers Scripts:Edit and Workers KV Storage:Edit. Create it under My Profile → API Tokens.\",\n        account: \"The token cannot access this account; pick another one.\",\n        kv: \"KV creation failed; check the KV quota or token permissions.\",\n        source: \"Downloading the Worker source from GitHub failed; check the network.\",\n        upload: \"Uploading the Worker failed; check Workers Scripts permission and source size.\",\n        config: \"Writing the password to KV failed.\",\n        subdomain: \"Enabling workers.dev failed.\",\n        verify: \"The Worker is up but did not answer; try again in a minute.\"\n      }\n    },\n    ru: {\n      brandSub: \"Автоматический установщик\", eyebrow: \"Установка за минуту\",\n      title: \"Установить Nova Worker\",\n      subtitle: \"Вставьте только токен Cloudflare; Worker, хранилище KV и пароль создадутся в вашем аккаунте.\",\n      chipKv: \"Авто KV\", chipPanel: \"Персидская панель\", chipFree: \"Бесплатно\",\n      formTitle: \"Вход по токену Cloudflare\", tokenLabel: \"API-токен Cloudflare\", tokenHelp: \"Создать токен\",\n      tokenHint: \"Нужны права: Workers Scripts:Edit и Workers KV Storage:Edit\",\n      installBtn: \"Начать установку\",\n      securityNote: \"Токен остаётся в этом браузере и отправляется только на api.cloudflare.com; он не сохраняется. После установки отзовите токен.\",\n      progressTitle: \"Установка\", preparing: \"Подготовка…\",\n      resultTitle: \"Установка завершена\", loginLabel: \"Адрес входа\", passLabel: \"Пароль администратора\",\n      passHint: \"Храните пароль в надёжном месте.\",\n      open: \"Открыть\", adminBtn: \"Панель\", qrLabel: \"Быстрое сканирование\",\n      qrHint: \"Отсканируйте камерой телефона, чтобы открыть страницу входа.\",\n      errorTitle: \"Ошибка\", retry: \"Повторить\", copied: \"Скопировано\", footer: \"Nova Worker · простая установка\",\n      again: \"Установить в другой аккаунт\",\n      emptyToken: \"Введите API-токен.\", tokenInvalid: \"Токен недействителен или без нужных прав.\",\n      authInvalid: \"Токен недействителен или истёк; создайте новый с правами Workers Scripts:Edit и Workers KV Storage:Edit.\",\n      multiAccountBody: \"У токена несколько аккаунтов; выберите нужный.\",\n      resume: \"Продолжить\", done: \"Установка выполнена.\", verifyPending: \"Worker развёрнут, но edge пока не отвечает; откройте адрес через минуту.\",\n      details: { worker: \"Worker\", version: \"Версия\", build: \"Сборка\", account: \"Аккаунт\", kv: \"KV\", source: \"Источник\" },\n      stepNames: { auth: \"Подключение к Cloudflare\", account: \"Выбор аккаунта\", kv: \"Создание KV\", source: \"Загрузка исходника\", upload: \"Загрузка Worker\", config: \"Запись пароля\", subdomain: \"Публичный адрес\", verify: \"Проверка\" },\n      stepStatus: { pending: \"Ожидание\", running: \"Выполняется\", ok: \"Готово\", fail: \"Ошибка\", skip: \"Пропущено\" },\n      errorHints: {\n        auth: \"Токену нужны права Workers Scripts:Edit и Workers KV Storage:Edit.\",\n        account: \"Токен не имеет доступа к этому аккаунту.\",\n        kv: \"Не удалось создать KV.\",\n        source: \"Не удалось скачать исходник Worker.\",\n        upload: \"Не удалось загрузить Worker.\",\n        config: \"Не удалось записать пароль в KV.\",\n        subdomain: \"Не удалось включить workers.dev.\",\n        verify: \"Worker запущен, но не отвечает; повторите через минуту.\"\n      }\n    }\n  };\n\n  var $ = function (id) { return document.getElementById(id); };\n  var lang = \"fa\";\n  try { var savedLang = localStorage.getItem(\"nova-install-lang\"); if (savedLang && I18N[savedLang]) lang = savedLang; } catch (e) {}\n\n  var state = { busy: false, steps: {}, token: \"\", accountId: null, result: null };\n\n  function t(key) {\n    var parts = String(key).split(\".\");\n    var read = function (root) { var node = root; for (var i = 0; i < parts.length; i++) { if (!node) return undefined; node = node[parts[i]]; } return node; };\n    var value = read(I18N[lang]);\n    if (value === undefined) value = read(I18N.fa);\n    return value === undefined ? \"\" : value;\n  }\n\n  function randomInt(max) {\n    var array = new Uint32Array(1);\n    crypto.getRandomValues(array);\n    return array[0] % max;\n  }\n\n  function generatePassword(length) {\n    var sets = [\"abcdefghijkmnopqrstuvwxyz\", \"ABCDEFGHJKLMNPQRSTUVWXYZ\", \"23456789\", \"-_.@#%+=\"];\n    var all = sets.join(\"\");\n    var out = sets.map(function (set) { return set[randomInt(set.length)]; });\n    while (out.length < length) out.push(all[randomInt(all.length)]);\n    for (var i = out.length - 1; i > 0; i--) { var j = randomInt(i + 1); var tmp = out[i]; out[i] = out[j]; out[j] = tmp; }\n    return out.join(\"\");\n  }\n\n  function randomKey() {\n    var bytes = new Uint8Array(24);\n    crypto.getRandomValues(bytes);\n    var text = \"\";\n    for (var i = 0; i < bytes.length; i++) text += String.fromCharCode(bytes[i]);\n    return btoa(text).replace(/\\+/g, \"-\").replace(/\\//g, \"_\").replace(/=+$/, \"\");\n  }\n\n  function randomSlug(length) {\n    var alphabet = \"abcdefghijklmnopqrstuvwxyz0123456789\";\n    var out = \"\";\n    for (var i = 0; i < length; i++) out += alphabet[randomInt(alphabet.length)];\n    return out;\n  }\n\n  function toast(message) {\n    var node = $(\"toast\");\n    node.textContent = message;\n    node.classList.add(\"show\");\n    clearTimeout(toast.timer);\n    toast.timer = setTimeout(function () { node.classList.remove(\"show\"); }, 1800);\n  }\n\n  function copy(text) {\n    var value = String(text || \"\");\n    if (navigator.clipboard && navigator.clipboard.writeText) {\n      navigator.clipboard.writeText(value).then(function () { toast(t(\"copied\")); }).catch(function () { fallbackCopy(value); });\n    } else fallbackCopy(value);\n  }\n\n  function fallbackCopy(value) {\n    var area = document.createElement(\"textarea\");\n    area.value = value; area.style.position = \"fixed\"; area.style.opacity = \"0\";\n    document.body.appendChild(area); area.select();\n    try { document.execCommand(\"copy\"); toast(t(\"copied\")); } catch (e) {}\n    document.body.removeChild(area);\n  }\n\n  function sleep(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }\n\n  /* One Cloudflare call through the proxy. Retries network errors, 429 and 5xx\n     (GET: 3 tries, other methods: `retries` option, default 1). */\n  function api(path, options) {\n    options = options || {};\n    var method = options.method || \"GET\";\n    var maxTries = options.retries || (method === \"GET\" ? 3 : 1);\n    var timeoutMs = options.timeoutMs || 120000;\n    var attempt = 0;\n\n    function once() {\n      attempt += 1;\n      var headers = new Headers(options.headers || {});\n      headers.set(\"Authorization\", \"Bearer \" + options.token);\n      if (options.body && !(options.body instanceof FormData)) headers.set(\"Content-Type\", \"application/json\");\n      var ctrl = new AbortController();\n      var timer = setTimeout(function () { ctrl.abort(); }, timeoutMs);\n      return fetch(PROXY_URL + \"/api\" + path, {\n        method: method, headers: headers, body: options.body, cache: \"no-store\", signal: ctrl.signal\n      }).then(function (response) {\n        return response.text().then(function (text) {\n          var data = null;\n          try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }\n          if (options.allow404 && response.status === 404) return null;\n          if (!response.ok || (data && data.success === false)) {\n            var detail = data && data.errors && data.errors.length\n              ? data.errors.map(function (item) { return (item.code ? \"[\" + item.code + \"] \" : \"\") + item.message; }).join(\"; \")\n              : (text.slice(0, 300) || (\"HTTP \" + response.status));\n            var error = new Error(detail);\n            error.status = response.status;\n            error.codes = data && data.errors ? data.errors.map(function (item) { return item.code; }) : [];\n            throw error;\n          }\n          return data && Object.prototype.hasOwnProperty.call(data, \"result\") ? data.result : data;\n        });\n      }).catch(function (error) {\n        var retryable = !error.status || error.status === 429 || error.status >= 500;\n        if (retryable && attempt < maxTries) return sleep(900 * attempt).then(once);\n        if (!error.status) error.message = \"Network: \" + (error.name === \"AbortError\" ? \"timeout\" : error.message);\n        throw error;\n      }).finally(function () { clearTimeout(timer); });\n    }\n    return once();\n  }\n\n  /* ------------------------------------------------------------ progress UI */\n\n  function resetSteps() {\n    state.steps = {};\n    STEPS.forEach(function (id) { state.steps[id] = { status: \"pending\", detail: \"\" }; });\n    $(\"accountPicker\").hidden = true;\n    renderSteps();\n    updateProgress();\n  }\n\n  function setStep(id, status, detail) {\n    state.steps[id] = { status: status, detail: detail || \"\" };\n    renderSteps();\n    updateProgress();\n  }\n\n  function renderSteps() {\n    var list = $(\"stepsList\");\n    list.innerHTML = \"\";\n    STEPS.forEach(function (id) {\n      var item = state.steps[id] || { status: \"pending\", detail: \"\" };\n      var li = document.createElement(\"li\");\n      li.className = \"step\";\n      li.setAttribute(\"data-status\", item.status);\n      var dot = document.createElement(\"span\");\n      dot.className = \"dot\";\n      dot.textContent = STEP_ICON[item.status] || \"·\";\n      var body = document.createElement(\"div\");\n      var name = document.createElement(\"div\");\n      name.className = \"step-name\";\n      name.textContent = t(\"stepNames.\" + id);\n      var detail = document.createElement(\"div\");\n      detail.className = \"step-detail\";\n      detail.textContent = item.detail || t(\"stepStatus.\" + item.status);\n      body.appendChild(name); body.appendChild(detail);\n      li.appendChild(dot); li.appendChild(body);\n      list.appendChild(li);\n    });\n  }\n\n  function updateProgress() {\n    var done = 0;\n    STEPS.forEach(function (id) { if (state.steps[id] && (state.steps[id].status === \"ok\" || state.steps[id].status === \"skip\")) done += 1; });\n    var percent = Math.round((done / STEPS.length) * 100);\n    $(\"barFill\").style.width = percent + \"%\";\n    $(\"progressPercent\").textContent = percent + \"%\";\n    var current = STEPS.find(function (id) { return state.steps[id] && state.steps[id].status === \"running\"; });\n    var label = current ? t(\"stepNames.\" + current) : (done === STEPS.length ? t(\"resultTitle\") : t(\"preparing\"));\n    $(\"progressLabel\").textContent = label;\n  }\n\n  function setBusy(busy) {\n    state.busy = busy;\n    var button = $(\"installBtn\");\n    button.disabled = busy;\n    button.classList.toggle(\"loading\", busy);\n    $(\"resumeBtn\").disabled = busy;\n  }\n\n  function showError(error, stepId) {\n    document.documentElement.setAttribute(\"data-state\", \"failed\");\n    $(\"errorCard\").hidden = false;\n    $(\"errorText\").textContent = (error && error.message) || String(error);\n    var hint = stepId ? t(\"errorHints.\" + stepId) : \"\";\n    if (stepId === \"auth\" && error && Array.isArray(error.codes) && error.codes.indexOf(1000) !== -1) {\n      hint = t(\"authInvalid\");\n    }\n    $(\"errorHint\").hidden = !hint;\n    $(\"errorHint\").textContent = hint || \"\";\n    $(\"formCard\").hidden = false;\n    setBusy(false);\n    var top = $(\"errorCard\").getBoundingClientRect().top + window.scrollY - 20;\n    window.scrollTo({ top: top, behavior: \"smooth\" });\n  }\n\n  function failStep(error) {\n    var stepId = STEPS.find(function (id) { return state.steps[id] && state.steps[id].status === \"running\"; });\n    if (stepId) setStep(stepId, \"fail\", error.message);\n    showError(error, stepId);\n    $(\"progressLabel\").textContent = t(\"errorTitle\");\n  }\n\n  /* ---------------------------------------------------------------- install */\n\n  async function begin(chosenAccount) {\n    if (state.busy) return;\n    var token = ($(\"token\").value || \"\").trim();\n    if (!token) { showError(new Error(t(\"emptyToken\"))); return; }\n\n    state.token = token;\n    state.accountId = chosenAccount || null;\n    $(\"errorCard\").hidden = true;\n    $(\"resultCard\").hidden = true;\n    $(\"progressCard\").hidden = false;\n    $(\"formCard\").hidden = true;\n    document.documentElement.setAttribute(\"data-state\", \"working\");\n    resetSteps();\n    setBusy(true);\n    $(\"progressCard\").scrollIntoView({ behavior: \"smooth\", block: \"start\" });\n\n    try {\n      setStep(\"auth\", \"running\");\n      /* Some scoped tokens do not have \"User Details: Read\", so /user/tokens/verify\n         returns 401 even when the account permissions are fine. Listing accounts is\n         the reliable check for the permissions this installer needs. */\n      var accounts = await api(\"/accounts?per_page=50\", { token: token });\n      accounts = Array.isArray(accounts) ? accounts : [];\n      if (!accounts.length) throw new Error(t(\"tokenInvalid\"));\n      setStep(\"auth\", \"ok\", \"token · account access\");\n\n      setStep(\"account\", \"running\");\n\n      var account = null;\n      if (state.accountId) account = accounts.find(function (item) { return item.id === state.accountId; }) || null;\n      if (!account && accounts.length === 1) account = accounts[0];\n\n      if (!account) {\n        renderAccounts(accounts);\n        setStep(\"account\", \"running\", t(\"multiAccountBody\"));\n        $(\"accountPicker\").hidden = false;\n        setBusy(false);\n        return;\n      }\n\n      state.accountId = account.id;\n      setStep(\"account\", \"ok\", account.name + \" · \" + account.id.slice(0, 8));\n      $(\"accountPicker\").hidden = true;\n      await installRest(account);\n    } catch (error) {\n      failStep(error);\n    } finally {\n      setBusy(false);\n    }\n  }\n\n  function renderAccounts(accounts) {\n    var select = $(\"accountSelect\");\n    select.innerHTML = \"\";\n    accounts.forEach(function (item) {\n      var option = document.createElement(\"option\");\n      option.value = item.id;\n      option.textContent = item.name + \" — \" + item.id.slice(0, 8);\n      select.appendChild(option);\n    });\n    if (state.accountId) select.value = state.accountId;\n  }\n\n  /* Account-level workers.dev subdomain. A Worker upload on an account that has\n     none is rejected (10063), so this MUST run before the upload. */\n  async function ensureAccountSubdomain(accountId, token) {\n    var info = null;\n    try { info = await api(\"/accounts/\" + accountId + \"/workers/subdomain\", { token: token }); } catch (e) { info = null; }\n    if (info && info.subdomain) return info.subdomain;\n    var lastError = null;\n    for (var i = 0; i < 5; i++) {\n      var candidate = \"nova-\" + randomSlug(6);\n      try {\n        var created = await api(\"/accounts/\" + accountId + \"/workers/subdomain\", {\n          token: token, method: \"PUT\", body: JSON.stringify({ subdomain: candidate })\n        });\n        return (created && created.subdomain) || candidate;\n      } catch (e) { lastError = e; }\n    }\n    throw lastError || new Error(\"Could not register a workers.dev subdomain.\");\n  }\n\n  async function fetchSource() {\n    var url = WORKER_SOURCE + \"?_nova=\" + Date.now();\n    var text = \"\";\n    try {\n      var ctrl = new AbortController();\n      var timer = setTimeout(function () { ctrl.abort(); }, 20000);\n      var direct = await fetch(url, { cache: \"no-store\", signal: ctrl.signal });\n      clearTimeout(timer);\n      if (!direct.ok) throw new Error(\"HTTP \" + direct.status);\n      text = await direct.text();\n    } catch (e) {\n      /* GitHub may be blocked or slow for the visitor: let the proxy fetch it. */\n      var viaProxy = await fetch(PROXY_URL + \"/source?_nova=\" + Date.now(), { cache: \"no-store\" });\n      if (!viaProxy.ok) throw new Error(\"GitHub source: HTTP \" + viaProxy.status);\n      text = await viaProxy.text();\n    }\n    if (!/export\\s+default\\s*\\{/.test(text)) throw new Error(\"Downloaded source is not a Worker.\");\n    return text;\n  }\n\n  async function waitForScript(accountId, token) {\n    for (var i = 0; i < 8; i++) {\n      try {\n        var res = await api(\"/accounts/\" + accountId + \"/workers/scripts/\" + WORKER_NAME + \"/settings\", { token: token, allow404: true });\n        if (res) return true;\n      } catch (e) { if ((e.codes || []).indexOf(10007) === -1) throw e; }\n      await sleep(700 * (i + 1));\n    }\n    return false;\n  }\n\n  async function enableWorkersDev(accountId, token) {\n    var path = \"/accounts/\" + accountId + \"/workers/scripts/\" + WORKER_NAME + \"/subdomain\";\n    var method = \"POST\";\n    var lastError = null;\n    for (var i = 0; i < 10; i++) {\n      try {\n        await api(path, { token: token, method: method, body: JSON.stringify({ enabled: true }) });\n        return;\n      } catch (e) {\n        lastError = e;\n        if (e.status === 405 && method === \"POST\") { method = \"PUT\"; continue; }   /* old API shape */\n        if ((e.codes || []).indexOf(10007) !== -1) { await sleep(1000 * (i + 1)); continue; } /* edge not consistent yet */\n        throw e;\n      }\n    }\n    throw lastError;\n  }\n\n  async function installRest(account) {\n    var token = state.token;\n    var accountId = account.id;\n    var kvTitle = WORKER_NAME + \"-kv\";\n    var key = randomKey();\n    var password = generatePassword(20);\n\n    /* KV (reuse when it already exists) */\n    setStep(\"kv\", \"running\");\n    var namespaces = await api(\"/accounts/\" + accountId + \"/storage/kv/namespaces?per_page=100\", { token: token });\n    var namespace = (namespaces || []).find(function (item) { return item.title === kvTitle; }) || null;\n    if (!namespace) {\n      namespace = await api(\"/accounts/\" + accountId + \"/storage/kv/namespaces\", {\n        token: token, method: \"POST\", body: JSON.stringify({ title: kvTitle })\n      });\n    }\n    setStep(\"kv\", \"ok\", kvTitle);\n\n    /* Source: latest from GitHub */\n    setStep(\"source\", \"running\");\n    var source = await fetchSource();\n    var sourceVersion = (source.match(/const\\s+Version\\s*=\\s*['\"`]([^'\"`]+)['\"`]/) || [])[1] || \"\";\n    var sourceBuild = (source.match(/const\\s+Build\\s*=\\s*['\"`]([^'\"`]+)['\"`]/) || [])[1] || \"\";\n    var sizeMb = (new Blob([source]).size / 1048576).toFixed(2);\n    setStep(\"source\", \"ok\", (sourceVersion || \"Worker\") + \" · \" + sizeMb + \" MB\");\n\n    /* Upload: subdomain first, then script, then confirm it really exists */\n    setStep(\"upload\", \"running\", \"workers.dev…\");\n    var subdomain = await ensureAccountSubdomain(accountId, token);\n    setStep(\"upload\", \"running\", WORKER_NAME + \" · \" + sizeMb + \" MB\");\n    var metadata = {\n      main_module: \"worker.js\",\n      compatibility_date: COMPAT_DATE,\n      bindings: [\n        { type: \"kv_namespace\", name: \"KV\", namespace_id: namespace.id },\n        { type: \"plain_text\", name: \"PANEL_URL\", text: PANEL_URL }\n      ]\n    };\n    var form = new FormData();\n    form.append(\"metadata\", new Blob([JSON.stringify(metadata)], { type: \"application/json\" }), \"metadata.json\");\n    form.append(\"worker.js\", new Blob([source], { type: \"application/javascript+module\" }), \"worker.js\");\n    await api(\"/accounts/\" + accountId + \"/workers/scripts/\" + WORKER_NAME, {\n      token: token, method: \"PUT\", body: form, retries: 3, timeoutMs: 180000\n    });\n    if (!(await waitForScript(accountId, token))) {\n      throw new Error(\"Worker upload finished but the script is not visible on the account yet. Run the install again.\");\n    }\n    setStep(\"upload\", \"ok\", WORKER_NAME);\n\n    /* Password + KEY (keep them on re-install) */\n    setStep(\"config\", \"running\");\n    var existing = await api(\"/accounts/\" + accountId + \"/storage/kv/namespaces/\" + namespace.id + \"/values/install.json\", { token: token, allow404: true });\n    if (existing && typeof existing.ADMIN === \"string\" && existing.ADMIN) password = existing.ADMIN;\n    if (existing && typeof existing.KEY === \"string\" && existing.KEY) key = existing.KEY;\n    var record = Object.assign({}, existing || {}, {\n      ADMIN: password,\n      KEY: key,\n      PANEL_URL: PANEL_URL,\n      installedAt: (existing && existing.installedAt) || new Date().toISOString(),\n      updatedAt: new Date().toISOString(),\n      installer: \"NovaInstall-web\",\n      installerVersion: \"1.2.0\"\n    });\n    await api(\"/accounts/\" + accountId + \"/storage/kv/namespaces/\" + namespace.id + \"/values/install.json\", {\n      token: token, method: \"PUT\", body: JSON.stringify(record), retries: 3\n    });\n    setStep(\"config\", \"ok\", \"install.json · ADMIN · KEY\");\n\n    /* Public URL (the Worker is guaranteed to exist now) */\n    setStep(\"subdomain\", \"running\");\n    await enableWorkersDev(accountId, token);\n    var publicBase = \"https://\" + WORKER_NAME + \".\" + subdomain + \".workers.dev\";\n    setStep(\"subdomain\", \"ok\", publicBase.replace(/^https:\\/\\//, \"\"));\n\n    /* Verify through the proxy (the Worker does not send CORS headers) */\n    setStep(\"verify\", \"running\", \"waiting for the edge…\");\n    var verified = null;\n    for (var attempt = 1; attempt <= 30; attempt++) {\n      try {\n        var probeResponse = await fetch(PROXY_URL + \"/probe?url=\" + encodeURIComponent(publicBase + \"/install/status?_t=\" + Date.now()), { cache: \"no-store\" });\n        var probe = await probeResponse.json();\n        if (probe && probe.ok && probe.status === 200 && probe.json && probe.json.kvOk && probe.json.admin) { verified = probe.json; break; }\n      } catch (e) {}\n      await sleep(3000);\n    }\n    if (verified) setStep(\"verify\", \"ok\", \"install/status · kvOk\");\n    else setStep(\"verify\", \"skip\", \"edge not ready yet\");\n\n    state.result = {\n      worker: WORKER_NAME,\n      account: account.name,\n      accountId: accountId,\n      kv: kvTitle,\n      kvId: namespace.id,\n      source: WORKER_SOURCE,\n      version: sourceVersion,\n      build: sourceBuild || (verified && verified.version) || \"\",\n      loginUrl: publicBase + \"/login\",\n      adminUrl: publicBase + \"/admin\",\n      password: password,\n      verified: Boolean(verified)\n    };\n    renderResult(state.result);\n    $(\"token\").value = \"\";\n    document.documentElement.setAttribute(\"data-state\", \"done\");\n    $(\"resultCard\").scrollIntoView({ behavior: \"smooth\", block: \"start\" });\n  }\n\n  /* ----------------------------------------------------------------- result */\n\n  function renderResult(result) {\n    $(\"resultCard\").hidden = false;\n    $(\"loginUrl\").textContent = result.loginUrl;\n    $(\"loginUrl\").href = result.loginUrl;\n    $(\"openLogin\").href = result.loginUrl;\n    $(\"openAdmin\").href = result.adminUrl;\n    $(\"resultPassword\").value = result.password;\n\n    var box = $(\"qrBox\");\n    box.innerHTML = \"\";\n    if (typeof QRCode !== \"undefined\") {\n      try {\n        new QRCode(box, { text: result.loginUrl, width: 300, height: 300, colorDark: \"#101622\", colorLight: \"#ffffff\", correctLevel: QRCode.CorrectLevel.M });\n      } catch (e) {}\n    }\n\n    var labels = t(\"details\");\n    var list = $(\"detailsList\");\n    list.innerHTML = \"\";\n    [\n      [labels.worker, result.worker],\n      [labels.version, result.version || \"-\"],\n      [labels.build, result.build || \"-\"],\n      [labels.account, result.account],\n      [labels.kv, result.kv],\n      [labels.source, result.source]\n    ].forEach(function (row) {\n      var wrap = document.createElement(\"div\");\n      wrap.className = \"detail\";\n      var dt = document.createElement(\"dt\"); dt.textContent = row[0];\n      var dd = document.createElement(\"dd\"); dd.textContent = row[1] || \"-\";\n      wrap.appendChild(dt); wrap.appendChild(dd);\n      list.appendChild(wrap);\n    });\n\n    $(\"resultNote\").textContent = result.verified ? t(\"done\") : t(\"verifyPending\");\n    $(\"resultNote\").className = result.verified ? \"hint\" : \"hint warn\";\n  }\n\n  /* ------------------------------------------------------------------- i18n */\n\n  function applyLang() {\n    document.documentElement.lang = lang;\n    document.documentElement.dir = lang === \"fa\" ? \"rtl\" : \"ltr\";\n    document.querySelectorAll(\"[data-lang]\").forEach(function (button) {\n      button.classList.toggle(\"on\", button.getAttribute(\"data-lang\") === lang);\n    });\n    document.querySelectorAll(\"[data-i18n]\").forEach(function (node) {\n      var value = t(node.getAttribute(\"data-i18n\"));\n      if (value) node.textContent = value;\n    });\n    if (Object.keys(state.steps).length) { renderSteps(); updateProgress(); }\n    if (state.result) renderResult(state.result);\n  }\n\n  /* ------------------------------------------------------------------- bind */\n\n  document.querySelectorAll(\"[data-lang]\").forEach(function (button) {\n    button.addEventListener(\"click\", function () {\n      var next = button.getAttribute(\"data-lang\");\n      if (!I18N[next] || next === lang) return;\n      lang = next;\n      try { localStorage.setItem(\"nova-install-lang\", lang); } catch (e) {}\n      applyLang();\n    });\n  });\n\n  $(\"tokenEye\").addEventListener(\"click\", function () {\n    var input = $(\"token\");\n    input.type = input.type === \"password\" ? \"text\" : \"password\";\n  });\n\n  $(\"installBtn\").addEventListener(\"click\", function () { begin(null); });\n\n  $(\"resumeBtn\").addEventListener(\"click\", function () { begin($(\"accountSelect\").value); });\n\n  $(\"retryBtn\").addEventListener(\"click\", function () {\n    $(\"errorCard\").hidden = true;\n    $(\"progressCard\").hidden = true;\n    $(\"formCard\").hidden = false;\n    document.documentElement.setAttribute(\"data-state\", \"idle\");\n  });\n\n  $(\"againBtn\").addEventListener(\"click\", function () { location.reload(); });\n\n  document.addEventListener(\"click\", function (event) {\n    var button = event.target.closest(\"[data-copy]\");\n    if (!button) return;\n    var node = $(button.getAttribute(\"data-copy\"));\n    if (node) copy(node.value !== undefined ? node.value : node.textContent);\n  });\n\n  /* ------------------------------------------------------------------- init */\n\n  $(\"token\").addEventListener(\"keydown\", function (event) {\n    if (event.key === \"Enter\") { event.preventDefault(); begin(null); }\n  });\n\n  applyLang();\n})();\n</script>\n</body>\n</html>\n";
 
-export default {
-  async fetch(request, env, ctx) {
-    const origin = request.headers.get("Origin") || "";
-    const cors = corsHeaders(origin, env);
-
-    if (request.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: cors.headers });
-    }
-    if (origin && !cors.allowed) {
-      return json({ ok: false, error: "origin_not_allowed" }, 403, cors.headers);
-    }
-
-    const url = new URL(request.url);
-    const path = url.pathname;
-
-    if (path === "/" || path === "/health") {
-      return json(
-        {
-          ok: true,
-          service: "nova-install",
-          version: VERSION,
-          capabilities: { install: true, bootstrap: true, api: true },
-        },
-        200,
-        cors.headers,
-      );
-    }
-
-    if (path === "/probe") return probe(url, cors.headers, env);
-
-    if (path === "/install") {
-      if (request.method !== "POST") {
-        return json({ ok: false, error: "method_not_allowed" }, 405, cors.headers);
-      }
-      return install(request, env, cors.headers, ctx);
-    }
-
-    if (!path.startsWith("/api/")) {
-      return json({ ok: false, error: "not_found" }, 404, cors.headers);
-    }
-    return proxyApi(request, url, cors.headers);
-  },
-};
-
-/* ------------------------------------------------------------------ install */
-
-async function install(request, env, cors, ctx) {
-  const auth = request.headers.get("Authorization") || "";
-  const token = auth.replace(/^Bearer\s+/i, "").trim();
-  if (!token) return json({ ok: false, error: "missing_token" }, 401, cors);
-
-  const declared = Number(request.headers.get("content-length") || 0);
-  if (declared > MAX_INSTALL_BODY) {
-    return json({ ok: false, error: "body_too_large" }, 413, cors);
-  }
-
-  let body = null;
-  try {
-    body = await request.json();
-  } catch {
-    return json({ ok: false, error: "bad_json" }, 400, cors);
-  }
-  if (!body || typeof body !== "object") {
-    return json({ ok: false, error: "bad_json" }, 400, cors);
-  }
-
-  let config;
-  try {
-    config = normalizeConfig(body);
-  } catch (error) {
-    return json({ ok: false, error: "bad_config", message: error.message }, 400, cors);
-  }
-
-  const { readable, writable } = new TransformStream();
-  const writer = writable.getWriter();
-  const encoder = new TextEncoder();
-  let closed = false;
-
-  const send = async (payload) => {
-    if (closed) return;
-    try {
-      await writer.write(encoder.encode(JSON.stringify(payload) + "\n"));
-    } catch {
-      closed = true;
-    }
+function corsHeaders(request, env) {
+  const origin = request.headers.get("Origin") || "";
+  const allowed = String(env.ALLOWED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const sameOrigin = origin && new URL(origin).host === new URL(request.url).host;
+  const ok = !origin || sameOrigin || !allowed.length || allowed.includes(origin);
+  const headers = {
+    Vary: "Origin",
+    "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+    "Access-Control-Allow-Headers": "Authorization,Content-Type,X-Auth-Email,X-Auth-Key",
+    "Access-Control-Max-Age": "86400",
   };
+  if (ok && origin) headers["Access-Control-Allow-Origin"] = origin;
+  return { headers, ok };
+}
 
-  const task = runInstall(config, token, send)
-    .catch((error) => {
-      return send({
-        type: "error",
-        step: error.step || "auth",
-        message: error.message || String(error),
-        codes: Array.isArray(error.codes) ? error.codes : [],
-        needAccountId: Boolean(error.needAccountId),
-        accounts: Array.isArray(error.accounts) ? error.accounts : undefined,
-      });
-    })
-    .finally(async () => {
-      closed = true;
-      try {
-        await writer.close();
-      } catch {
-        /* client disconnected */
-      }
-    });
-
-  if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(task);
-
-  return new Response(readable, {
-    status: 200,
-    headers: {
-      ...cors,
-      "Content-Type": "application/x-ndjson; charset=utf-8",
-      "Cache-Control": "no-store, no-cache, must-revalidate",
-      "X-Accel-Buffering": "no",
-      "X-Content-Type-Options": "nosniff",
-    },
+function json(data, status, cors) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...cors.headers },
   });
 }
 
-async function runInstall(config, token, send) {
-  let step = "auth";
-  try {
-    await send({ type: "step", step: "auth", status: "running" });
-
-    const account = await resolveAccount(config.accountId, token, send);
-    if (!account) return;
-
-    await send({ type: "step", step: "auth", status: "ok", detail: "token · account access" });
-    await send({
-      type: "step",
-      step: "account",
-      status: "ok",
-      detail: account.name + " · " + account.id.slice(0, 8),
-    });
-
-    step = "kv";
-    await send({ type: "step", step, status: "running" });
-    const namespace = await ensureNamespace(account.id, config.workerName + "-kv", token);
-    await send({
-      type: "step",
-      step,
-      status: "ok",
-      detail: namespace.title + (namespace.reused ? " · reused" : ""),
-    });
-
-    step = "source";
-    await send({ type: "step", step, status: "running" });
-    const source = await loadSource(config.sourceUrl);
-    await send({
-      type: "step",
-      step,
-      status: "ok",
-      detail: (source.version || "Worker") + " · " + (source.bytes.byteLength / 1048576).toFixed(2) + " MB",
-    });
-
-    step = "upload";
-    await send({ type: "step", step, status: "running" });
-    // On accounts that never had a workers.dev subdomain, Cloudflare rejects
-    // the first script upload with error 10063 ("subdomain_required"), so the
-    // subdomain must be registered BEFORE uploading the Worker.
-    let preparedSubdomain = "";
-    let subdomainPrepareError = null;
-    try {
-      preparedSubdomain = await ensureAccountSubdomain(account.id, token);
-    } catch (error) {
-      subdomainPrepareError = error;
-    }
-    try {
-      await uploadWorker(account.id, config, namespace.id, source.bytes, token);
-    } catch (error) {
-      if (
-        subdomainPrepareError &&
-        Array.isArray(error.codes) &&
-        error.codes.indexOf(10063) !== -1
-      ) {
-        const combined = new Error(
-          "workers.dev subdomain is missing and could not be created: " + subdomainPrepareError.message,
-        );
-        combined.step = "subdomain";
-        combined.codes = error.codes;
-        throw combined;
-      }
-      throw error;
-    }
-    await send({ type: "step", step, status: "ok", detail: config.workerName });
-
-    step = "config";
-    await send({ type: "step", step, status: "running" });
-    const credentials = await writeInstallRecord(account.id, namespace.id, config, token);
-    await send({ type: "step", step, status: "ok", detail: "install.json · ADMIN · KEY" });
-
-    step = "subdomain";
-    await send({ type: "step", step, status: "running" });
-    const publicBase = await enablePublicUrl(account.id, config.workerName, token, preparedSubdomain);
-    await send({
-      type: "step",
-      step,
-      status: "ok",
-      detail: publicBase.replace(/^https:\/\//, ""),
-    });
-
-    step = "verify";
-    await send({ type: "step", step, status: "running", detail: "waiting for the edge…" });
-    const status = await verifyWorker(publicBase);
-    await send({
-      type: "step",
-      step,
-      status: status ? "ok" : "skip",
-      detail: status ? "install/status · kvOk" : "edge not ready yet",
-    });
-
-    await send({
-      type: "result",
-      result: {
-        worker: config.workerName,
-        account: account.name,
-        accountId: account.id,
-        kv: config.workerName + "-kv",
-        kvId: namespace.id,
-        source: source.url,
-        version: source.version,
-        build: source.build || (status && status.version) || "",
-        loginUrl: publicBase + "/login",
-        adminUrl: publicBase + "/admin",
-        password: credentials.password,
-        verified: Boolean(status),
-      },
-    });
-  } catch (error) {
-    error.step = error.step || step;
-    throw error;
-  }
-}
-
-async function resolveAccount(accountId, token, send) {
-  if (accountId) {
-    try {
-      const info = await cf(token, "GET", `/accounts/${accountId}`);
-      return { id: accountId, name: (info && info.name) || accountId };
-    } catch (error) {
-      if (isInvalidToken(error) || error.status === 0) throw error;
-      // A token with Workers permissions but without Account Settings:Read
-      // cannot read the account; the ID is still usable for Workers calls.
-      return { id: accountId, name: accountId };
-    }
-  }
-
-  let listError = null;
-  let accounts = [];
-  try {
-    const list = await cf(token, "GET", "/accounts?per_page=50");
-    accounts = Array.isArray(list) ? list : [];
-  } catch (error) {
-    listError = error;
-    if (isInvalidToken(error) || error.status === 0) throw error;
-  }
-
-  if (!accounts.length) {
-    try {
-      const memberships = await cf(token, "GET", "/memberships?per_page=50");
-      accounts = (Array.isArray(memberships) ? memberships : [])
-        .map((item) => (item && item.account ? item.account : item))
-        .filter((item) => item && item.id);
-    } catch (error) {
-      if (!listError) listError = error;
-      if (isInvalidToken(error) || error.status === 0) throw error;
-    }
-  }
-
-  if (accounts.length === 1) {
-    return { id: accounts[0].id, name: accounts[0].name || accounts[0].id };
-  }
-  if (accounts.length > 1) {
-    const error = new Error("multiple_accounts");
-    error.needAccountId = true;
-    error.accounts = accounts.map((item) => ({ id: item.id, name: item.name || item.id }));
-    error.step = "account";
-    throw error;
-  }
-
-  const error = new Error("account_required");
-  error.needAccountId = true;
-  error.step = "account";
-  if (listError && listError.message) error.message = "account_required: " + listError.message;
-  throw error;
-}
-
-async function ensureNamespace(accountId, title, token) {
-  const list = await cf(token, "GET", `/accounts/${accountId}/storage/kv/namespaces?per_page=100`);
-  const found = (Array.isArray(list) ? list : []).find((item) => item && item.title === title);
-  if (found) return { ...found, reused: true };
-  const created = await cf(token, "POST", `/accounts/${accountId}/storage/kv/namespaces`, { title });
-  return { ...created, reused: false };
-}
-
-async function loadSource(sourceUrl) {
-  const urls = [sourceUrl];
-  if (sourceUrl === DEFAULT_SOURCE) urls.push(FALLBACK_SOURCE);
-
-  let lastError = null;
-  for (const url of urls) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), SOURCE_TIMEOUT);
-    try {
-      const response = await fetch(url, {
-        headers: {
-          "User-Agent": "NovaInstall/2.0",
-          Accept: "text/javascript, application/javascript, */*",
-        },
-        redirect: "follow",
-        signal: controller.signal,
-        cf: { cacheEverything: false },
-      });
-      if (!response.ok) throw new Error("HTTP " + response.status);
-      const declared = Number(response.headers.get("content-length") || 0);
-      if (declared > MAX_SOURCE_BYTES) throw new Error("source_too_large");
-      const bytes = await response.arrayBuffer();
-      if (bytes.byteLength < MIN_SOURCE_BYTES) throw new Error("source_too_small");
-      if (bytes.byteLength > MAX_SOURCE_BYTES) throw new Error("source_too_large");
-      const head = new TextDecoder().decode(bytes.slice(0, Math.min(bytes.byteLength, 131072)));
-      if (head.indexOf("export default") === -1) throw new Error("not_a_worker");
-      return {
-        bytes,
-        url,
-        version: matchValue(head, /const\s+Version\s*=\s*['"`]([^'"`]+)/),
-        build: matchValue(head, /const\s+Build\s*=\s*['"`]([^'"`]+)/),
-      };
-    } catch (error) {
-      lastError = error;
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  const error = new Error(lastError ? lastError.message : "source_failed");
-  error.step = "source";
-  throw error;
-}
-
-async function uploadWorker(accountId, config, namespaceId, bytes, token) {
-  const preserved = await existingBindings(accountId, config.workerName, token);
-  const bindings = [
-    { type: "kv_namespace", name: "KV", namespace_id: namespaceId },
-    ...preserved,
-    { type: "plain_text", name: "PANEL_URL", text: config.panelUrl },
-  ];
-  const metadata = {
-    main_module: "worker.js",
-    compatibility_date: config.compatibilityDate,
-    bindings,
-  };
-  const form = new FormData();
-  form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }), "metadata.json");
-  form.append("worker.js", new Blob([bytes], { type: "application/javascript+module" }), "worker.js");
-  await cf(token, "PUT", `/accounts/${accountId}/workers/scripts/${config.workerName}`, form, {
-    timeout: UPLOAD_TIMEOUT,
-  });
-}
-
-async function existingBindings(accountId, workerName, token) {
-  try {
-    const info = await cf(token, "GET", `/accounts/${accountId}/workers/scripts/${workerName}/settings`, undefined, {
-      allow404: true,
-    });
-    const bindings = info && Array.isArray(info.bindings) ? info.bindings : [];
-    return bindings.filter(
-      (item) => item && item.type === "plain_text" && item.name && item.name !== "PANEL_URL" && item.name !== "KV",
-    );
-  } catch {
-    return [];
-  }
-}
-
-async function writeInstallRecord(accountId, namespaceId, config, token) {
-  let existing = null;
-  try {
-    const text = await cf(
-      token,
-      "GET",
-      `/accounts/${accountId}/storage/kv/namespaces/${namespaceId}/values/install.json`,
-      undefined,
-      { raw: true, allow404: true },
-    );
-    if (text) {
-      try {
-        existing = JSON.parse(text);
-      } catch {
-        existing = null;
-      }
-    }
-  } catch {
-    existing = null;
-  }
-
-  const password =
-    config.password ||
-    (existing && typeof existing.ADMIN === "string" && existing.ADMIN) ||
-    generatePassword(20);
-  const key =
-    config.key || (existing && typeof existing.KEY === "string" && existing.KEY) || generateKey();
-  const now = new Date().toISOString();
-  const record = Object.assign({}, existing || {}, {
-    ADMIN: password,
-    KEY: key,
-    PANEL_URL: config.panelUrl,
-    installedAt: (existing && existing.installedAt) || now,
-    updatedAt: now,
-    installer: "NovaInstall-web",
-    installerVersion: VERSION,
-  });
-
-  await cf(
-    token,
-    "PUT",
-    `/accounts/${accountId}/storage/kv/namespaces/${namespaceId}/values/install.json`,
-    JSON.stringify(record, null, 2),
-    { rawBody: true, contentType: "application/json" },
-  );
-
-  return { password, key };
-}
-
-/**
- * Returns the account's workers.dev subdomain, creating one if the account
- * does not have one yet. Cloudflare rejects the first script upload with
- * error 10063 when no subdomain exists, so this must run BEFORE the upload.
- * Subdomains are a global namespace, so a random suffix is retried a few
- * times. Only lowercase letters and digits are used (valid under every
- * workers.dev naming rule).
- */
-async function ensureAccountSubdomain(accountId, token) {
-  let existing = "";
-  try {
-    const info = await cf(token, "GET", `/accounts/${accountId}/workers/subdomain`, undefined, {
-      allow404: true,
-    });
-    existing = (info && info.subdomain) || "";
-  } catch {
-    existing = "";
-  }
-  if (existing) return existing;
-
-  let lastError = null;
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    const candidate = "nova" + randomSlug(8);
-    try {
-      const created = await cf(token, "PUT", `/accounts/${accountId}/workers/subdomain`, {
-        subdomain: candidate,
-      });
-      return (created && created.subdomain) || candidate;
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  const error = new Error(
-    "workers.dev subdomain could not be created: " + (lastError ? lastError.message : "unknown error"),
-  );
-  error.step = "subdomain";
-  error.codes = lastError && Array.isArray(lastError.codes) ? lastError.codes : [];
-  throw error;
-}
-
-async function enablePublicUrl(accountId, workerName, token, preparedSubdomain = "") {
-  const subdomain = preparedSubdomain || (await ensureAccountSubdomain(accountId, token));
-
-  await cf(token, "PUT", `/accounts/${accountId}/workers/scripts/${workerName}/subdomain`, {
-    enabled: true,
-  });
-
-  return `https://${workerName}.${subdomain}.workers.dev`;
-}
-
-async function verifyWorker(publicBase) {
-  for (let attempt = 0; attempt < VERIFY_TRIES; attempt += 1) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
-    try {
-      const response = await fetch(`${publicBase}/install/status?_t=${Date.now()}`, {
-        headers: { Accept: "application/json", "User-Agent": "NovaInstall/2.0" },
-        signal: controller.signal,
-        cf: { cacheEverything: false },
-      });
-      if (response.ok) {
-        const data = await response.json();
-        if (data && data.kvOk && data.admin) return data;
-      }
-    } catch {
-      /* not propagated yet */
-    } finally {
-      clearTimeout(timer);
-    }
-    await sleep(VERIFY_DELAY);
-  }
-  return null;
-}
-
-/* ------------------------------------------------------------- CF API proxy */
-
-async function proxyApi(request, url, cors) {
-  const apiPath = url.pathname.slice("/api".length);
-  if (!/^\/(user|accounts|memberships)(\/|$)/.test(apiPath)) {
-    return json({ ok: false, error: "forbidden_path" }, 403, cors);
-  }
-
+async function forwardApi(request, url, env, cors) {
+  const base = String(env.CF_API_BASE || CF_API).replace(/\/+$/, "");
+  const target = base + url.pathname.slice("/api".length) + url.search;
   const headers = new Headers();
-  for (const name of ["authorization", "x-auth-email", "x-auth-key", "content-type", "accept"]) {
+  for (const name of ["Authorization", "Content-Type", "X-Auth-Email", "X-Auth-Key"]) {
     const value = request.headers.get(name);
     if (value) headers.set(name, value);
   }
-  headers.set("User-Agent", "NovaInstallProxy/2.0");
+  headers.set("Accept", "application/json");
 
-  let body;
+  const init = { method: request.method, headers, signal: AbortSignal.timeout(120000) };
   if (request.method !== "GET" && request.method !== "HEAD") {
-    const declared = Number(request.headers.get("content-length") || 0);
-    if (declared > MAX_PROXY_BODY) {
-      return json({ ok: false, error: "body_too_large" }, 413, cors);
-    }
-    body = request.body;
+    // Buffer the body: Cloudflare's script upload needs a known Content-Length,
+    // a chunked passthrough of a ~5 MB multipart body is what fails in practice.
+    init.body = await request.arrayBuffer();
   }
 
-  let upstream;
-  try {
-    upstream = await fetch(`${CF_API}${apiPath}${url.search}`, {
-      method: request.method,
-      headers,
-      body,
-      redirect: "follow",
-      cf: { cacheEverything: false },
-    });
-  } catch (error) {
-    return json(
-      { ok: false, error: "upstream_unreachable", message: String((error && error.message) || error) },
-      502,
-      cors,
-    );
-  }
-
-  const outHeaders = new Headers(upstream.headers);
-  for (const name of [
-    "set-cookie",
-    "content-encoding",
-    "content-length",
-    "transfer-encoding",
-    "connection",
-  ]) {
-    outHeaders.delete(name);
-  }
-  for (const [name, value] of Object.entries(cors)) outHeaders.set(name, value);
-  outHeaders.set("Cache-Control", "no-store");
-  outHeaders.set("X-Content-Type-Options", "nosniff");
-
-  return new Response(upstream.body, { status: upstream.status, headers: outHeaders });
-}
-
-/* --------------------------------------------------------------- CF client */
-
-async function cf(token, method, path, body, options = {}) {
-  const headers = {
-    Authorization: `Bearer ${token}`,
-    Accept: "application/json",
-    "User-Agent": "NovaInstall/2.0",
-  };
-
-  let payload;
-  if (body instanceof FormData) {
-    payload = body;
-  } else if (options.rawBody) {
-    headers["Content-Type"] = options.contentType || "text/plain";
-    payload = body;
-  } else if (body !== undefined) {
-    headers["Content-Type"] = "application/json";
-    payload = JSON.stringify(body);
-  }
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), options.timeout || API_TIMEOUT);
   let response;
   try {
-    response = await fetch(`${CF_API}${path}`, {
-      method,
-      headers,
-      body: payload,
-      signal: controller.signal,
-      redirect: "follow",
-      cf: { cacheEverything: false },
-    });
+    response = await fetch(target, init);
   } catch (error) {
-    const wrapped = new Error(
-      error && error.name === "AbortError" ? "Cloudflare API timeout" : String((error && error.message) || error),
-    );
-    wrapped.status = 0;
-    throw wrapped;
-  } finally {
-    clearTimeout(timer);
+    return json({ success: false, errors: [{ code: 0, message: "Proxy could not reach Cloudflare: " + error.message }] }, 502, cors);
   }
-
-  const text = await response.text();
-  let data = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    data = null;
-  }
-
-  if (response.status === 404 && options.allow404) return null;
-
-  if (!response.ok || (data && data.success === false)) {
-    const errors = data && Array.isArray(data.errors) ? data.errors : [];
-    const detail = errors.length
-      ? errors.map((item) => `${item.code ? `[${item.code}] ` : ""}${item.message || "error"}`).join("; ")
-      : text.slice(0, 300) || `HTTP ${response.status}`;
-    const error = new Error(detail);
-    error.status = response.status;
-    error.codes = errors.map((item) => item.code).filter(Boolean);
-    throw error;
-  }
-
-  if (options.raw) return text;
-  return data && Object.prototype.hasOwnProperty.call(data, "result") ? data.result : data;
-}
-
-/* ---------------------------------------------------------------- validation */
-
-function normalizeConfig(body) {
-  const accountId = String(body.accountId || "").trim();
-  if (accountId && !/^[a-f0-9]{32}$/i.test(accountId)) throw new Error("invalid_account_id");
-
-  const workerName = String(body.workerName || DEFAULT_WORKER).trim();
-  if (!/^[a-z0-9][a-z0-9_-]{0,62}$/i.test(workerName)) throw new Error("invalid_worker_name");
-
-  const panelUrl = String(body.panelUrl || DEFAULT_PANEL).trim();
-  if (!/^https:\/\/[^\s]+$/i.test(panelUrl)) throw new Error("invalid_panel_url");
-
-  const sourceUrl = String(body.sourceUrl || DEFAULT_SOURCE).trim();
-  if (!SOURCE_PREFIXES.some((prefix) => sourceUrl.startsWith(prefix))) {
-    throw new Error("source_not_allowed");
-  }
-
-  const compatibilityDate = String(body.compatibilityDate || DEFAULT_COMPAT).trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(compatibilityDate)) {
-    throw new Error("invalid_compatibility_date");
-  }
-
-  const password = body.password ? String(body.password) : "";
-  if (password && (password.length < 6 || password.length > 128)) throw new Error("invalid_password");
-
-  const key = body.key ? String(body.key) : "";
-  if (key && (key.length < 8 || key.length > 128)) throw new Error("invalid_key");
-
-  return { accountId, workerName, panelUrl, sourceUrl, compatibilityDate, password, key };
-}
-
-function isInvalidToken(error) {
-  if (!error) return false;
-  if (error.status === 401) return true;
-  return Array.isArray(error.codes) && error.codes.some((code) => code === 9109 || code === 6003);
-}
-
-function matchValue(text, regex) {
-  const match = text.match(regex);
-  return match ? match[1] : "";
-}
-
-/* ------------------------------------------------------------------ helpers */
-
-function corsHeaders(origin, env) {
-  const allowed = String((env && env.ALLOWED_ORIGINS) || "https://irnova.github.io")
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-  const permit = Boolean(origin && (allowed.includes("*") || allowed.includes(origin)));
-
-  const headers = {
-    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "authorization, content-type, x-auth-email, x-auth-key, accept",
-    "Access-Control-Max-Age": "600",
-    Vary: "Origin",
-  };
-  if (permit) headers["Access-Control-Allow-Origin"] = origin;
-  return { headers, allowed: permit || !origin };
-}
-
-function json(payload, status, cors) {
-  return new Response(JSON.stringify(payload), {
-    status,
+  const body = await response.arrayBuffer();
+  return new Response(body, {
+    status: response.status,
     headers: {
-      ...cors,
-      "Content-Type": "application/json; charset=utf-8",
+      "Content-Type": response.headers.get("Content-Type") || "application/json",
       "Cache-Control": "no-store",
+      ...cors.headers,
     },
   });
 }
 
-async function probe(url, cors, env) {
-  const target = url.searchParams.get("url") || "";
-  let parsed;
+async function probe(url, cors) {
+  let target;
   try {
-    parsed = new URL(target);
+    target = new URL(url.searchParams.get("url") || "");
   } catch {
-    return json({ ok: false, error: "invalid_url" }, 400, cors);
+    return json({ ok: false, error: "bad url" }, 400, cors);
   }
-
-  const host = parsed.hostname.toLowerCase();
-  const hostAllowed =
-    host.endsWith(".workers.dev") ||
-    host === "workers.dev" ||
-    String((env && env.PROBE_HOSTS) || "")
-      .split(",")
-      .map((item) => item.trim().toLowerCase())
-      .filter(Boolean)
-      .includes(host);
-
-  if (parsed.protocol !== "https:" || !hostAllowed) {
-    return json({ ok: false, error: "host_not_allowed" }, 403, cors);
+  if (target.protocol !== "https:" || !target.hostname.endsWith(".workers.dev")) {
+    return json({ ok: false, error: "only https://*.workers.dev is allowed" }, 400, cors);
   }
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12000);
   try {
-    const response = await fetch(parsed.toString(), {
-      headers: { "User-Agent": "NovaInstallProxy/2.0", Accept: "application/json" },
-      cache: "no-store",
-      signal: controller.signal,
-      redirect: "follow",
+    const response = await fetch(target.toString(), {
+      headers: { Accept: "application/json", "User-Agent": "NovaInstall-probe/" + VERSION },
+      signal: AbortSignal.timeout(10000),
+      cf: { cacheTtl: 0 },
     });
-    const text = (await response.text()).slice(0, MAX_PROBE_BYTES);
-    let parsedBody = null;
-    try {
-      parsedBody = JSON.parse(text);
-    } catch {
-      parsedBody = null;
-    }
-    return json(
-      {
-        ok: true,
-        status: response.status,
-        json: parsedBody,
-        text: parsedBody ? undefined : text.slice(0, 300),
-      },
-      200,
-      cors,
-    );
+    const text = await response.text();
+    let parsed = null;
+    try { parsed = JSON.parse(text); } catch {}
+    return json({ ok: true, status: response.status, json: parsed }, 200, cors);
   } catch (error) {
-    return json(
-      { ok: false, error: "probe_failed", message: String((error && error.message) || error) },
-      502,
-      cors,
-    );
-  } finally {
-    clearTimeout(timer);
+    return json({ ok: false, error: String(error && error.message || error) }, 200, cors);
   }
 }
 
-function randomInt(max) {
-  const array = new Uint32Array(1);
-  crypto.getRandomValues(array);
-  return array[0] % max;
-}
-
-function randomSlug(length) {
-  const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
-  let out = "";
-  for (let i = 0; i < length; i += 1) out += alphabet[randomInt(alphabet.length)];
-  return out;
-}
-
-function generatePassword(length) {
-  const sets = ["abcdefghijkmnopqrstuvwxyz", "ABCDEFGHJKLMNPQRSTUVWXYZ", "23456789", "-_.@#%+="];
-  const all = sets.join("");
-  const out = sets.map((set) => set[randomInt(set.length)]);
-  while (out.length < length) out.push(all[randomInt(all.length)]);
-  for (let i = out.length - 1; i > 0; i -= 1) {
-    const j = randomInt(i + 1);
-    const tmp = out[i];
-    out[i] = out[j];
-    out[j] = tmp;
+async function source(env, cors) {
+  const base = env.SOURCE_URL || DEFAULT_SOURCE;
+  try {
+    const response = await fetch(base + (base.includes("?") ? "&" : "?") + "_nova=" + Date.now(), {
+      headers: { "User-Agent": "NovaInstall/" + VERSION },
+      signal: AbortSignal.timeout(60000),
+    });
+    if (!response.ok) return new Response("GitHub: HTTP " + response.status, { status: 502, headers: cors.headers });
+    return new Response(response.body, {
+      headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store", ...cors.headers },
+    });
+  } catch (error) {
+    return new Response("GitHub fetch failed: " + error.message, { status: 502, headers: cors.headers });
   }
-  return out.join("");
 }
 
-function generateKey() {
-  const bytes = new Uint8Array(24);
-  crypto.getRandomValues(bytes);
-  let text = "";
-  for (const byte of bytes) text += String.fromCharCode(byte);
-  return btoa(text).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    const cors = corsHeaders(request, env);
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+    if (request.method === "OPTIONS") return new Response(null, { status: cors.ok ? 204 : 403, headers: cors.headers });
+    if (!cors.ok) return json({ ok: false, error: "origin not allowed" }, 403, cors);
+
+    if (url.pathname === "/health") {
+      return json({ ok: true, version: VERSION, capabilities: ["api", "probe", "source", "ui"] }, 200, cors);
+    }
+    if (url.pathname.startsWith("/api/")) return forwardApi(request, url, env, cors);
+    if (url.pathname === "/probe") return probe(url, cors);
+    if (url.pathname === "/source") return source(env, cors);
+
+    if (url.pathname === "/" || url.pathname === "/index.html") {
+      return new Response(UI_HTML, {
+        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", ...cors.headers },
+      });
+    }
+    return json({ ok: false, error: "not found" }, 404, cors);
+  },
+};
