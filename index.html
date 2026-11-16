@@ -15,7 +15,7 @@
 <meta name="apple-mobile-web-app-title" content="Nova Install"/>
 <link rel="apple-touch-icon" href="https://nameless-rain-87c6.altramax083.workers.dev/icons/icon-192.png"/>
 <title>Nova Worker — نصب آسان</title>
-<link rel="icon" type="image/svg+xml" href="assets/logo-mark.svg" />
+<link rel="icon" type="image/svg+xml" href="https://irnova.github.io/NovaInstall/assets/logo-mark.svg" />
 <style>
 
 :root{
@@ -1203,21 +1203,6 @@ h1{font-weight:800}
       lastEvent = Date.now();
       if (event.type === "step") {
         setStep(event.step, event.status, event.detail);
-        return;
-      }
-      if (event.type === "activate" && event.url) {
-        try {
-          termWrite("run", "activate edge…");
-          var ar = await fetch(event.url, {
-            method: "POST",
-            headers: { "x-nova-install": event.secret || "", "Accept": "application/json" }
-          });
-          var aj = await ar.json().catch(function () { return {}; });
-          if (ar.ok && aj.ok) termWrite("ok", "activate ok");
-          else termWrite("run", "activate wait — " + (aj.error || ar.status));
-        } catch (ae) {
-          termWrite("run", "activate later — " + ae);
-        }
         return;
       }
       if (event.type === "result") {
