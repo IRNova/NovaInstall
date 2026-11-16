@@ -342,7 +342,7 @@ async function runInstall(config, token, send) {
 
     let preparedSubdomain = "";
     let subdomainPrepareError = null;
-    const kvPromise = ensureNamespace(account.id, config.workerName + "-kv", token);
+    const kvPromise = ensureNamespace(account.id, config.workerName + "-kv", token).catch((error) => { error.step = error.step || "kv"; throw error; });
     const sourcePromise = loadSource(config.sourceUrl);
     const subPromise = ensureAccountSubdomain(account.id, token)
       .then((s) => {
@@ -588,21 +588,51 @@ async function resolveAccount(accountId, token, send) {
 }
 
 async function ensureNamespace(accountId, title, token) {
-  // Prefer create (1 request). Only list when title already exists.
+  const path = `/accounts/${accountId}/storage/kv/namespaces`;
+  const findExisting = async () => {
+    const list = await cf(token, "GET", path + "?per_page=100", undefined, { timeout: 45000 });
+    return (Array.isArray(list) ? list : []).find((item) => item && item.title === title) || null;
+  };
+
+  // Creation can take longer than other API calls on some accounts.
   try {
-    const created = await cf(token, "POST", `/accounts/${accountId}/storage/kv/namespaces`, { title });
+    const created = await cf(token, "POST", path, { title }, { timeout: 45000 });
     return { ...created, reused: false };
   } catch (error) {
     const msg = String((error && error.message) || "");
     const codes = (error && error.codes) || [];
     const conflict = codes.indexOf(10014) !== -1 || /already exists|duplicate|taken/i.test(msg);
-    if (!conflict) throw error;
+    const ambiguous = error.status === 0 || /network|fetch failed|timeout|connection/i.test(msg);
+
+    if (!conflict && !ambiguous) {
+      error.step = "kv";
+      throw error;
+    }
+
+    // A timed-out POST may nevertheless have succeeded at Cloudflare. Check
+    // before doing anything else so we never blindly create a duplicate KV.
+    let lastListError = null;
+    const checks = ambiguous ? 4 : 1;
+    for (let attempt = 0; attempt < checks; attempt++) {
+      try {
+        const found = await findExisting();
+        if (found) return { ...found, reused: true };
+      } catch (listError) {
+        lastListError = listError;
+      }
+      if (attempt + 1 < checks) await sleep(1200);
+    }
+
+    const wrapped = new Error(
+      ambiguous
+        ? "KV namespace request lost its network response. Cloudflare was checked for an existing namespace but none could be confirmed. Wait a few seconds and retry; the installer did not blindly repeat the create request."
+        : (lastListError && lastListError.message) || msg || "KV namespace already exists but could not be found"
+    );
+    wrapped.step = "kv";
+    wrapped.status = error.status || 0;
+    wrapped.cause = error;
+    throw wrapped;
   }
-  const list = await cf(token, "GET", `/accounts/${accountId}/storage/kv/namespaces?per_page=100`);
-  const found = (Array.isArray(list) ? list : []).find((item) => item && item.title === title);
-  if (found) return { ...found, reused: true };
-  const created = await cf(token, "POST", `/accounts/${accountId}/storage/kv/namespaces`, { title });
-  return { ...created, reused: false };
 }
 
 async function loadSource(sourceUrl) {
@@ -1073,7 +1103,7 @@ async function cf(token, method, path, body, options = {}) {
     });
   } catch (error) {
     const wrapped = new Error(
-      error && error.name === "AbortError" ? "Cloudflare API timeout" : String((error && error.message) || error),
+      (error && error.name === "AbortError" ? "Cloudflare API timeout" : "Cloudflare API network error") + " [" + method + " " + path + "]: " + String((error && error.message) || error),
     );
     wrapped.status = 0;
     throw wrapped;
