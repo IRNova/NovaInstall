@@ -1359,7 +1359,7 @@ h1{font-weight:800}
       var info = { version: "", build: "" };
       if (!baseUrl) return info;
       try {
-        var response = await fetchTimeout(baseUrl.replace(/\\/$/, "") + "/version", {
+        var response = await fetchTimeout(baseUrl.replace(/\/$/, "") + "/version", {
           method: "GET",
           cache: "no-store",
           headers: { "Accept": "application/json, text/plain, */*" }
