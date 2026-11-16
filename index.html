@@ -1371,13 +1371,18 @@ h1{font-weight:800}
         if (data && data.ADMIN) {
           var base = subdomain ? "https://" + workerName + "." + subdomain + ".workers.dev" : "";
           return {
-            worker: workerName,
+            worker: data.worker || workerName,
+            account: data.account || accountId,
+            accountId: data.accountId || accountId,
+            kv: data.kv || namespace.title || (workerName + "-kv"),
+            kvId: data.kvId || namespace.id,
+            source: data.source || WORKER_SOURCE,
             loginUrl: base + "/login",
             adminUrl: base + "/admin",
             password: data.ADMIN,
             verified: true,
-            version: "",
-            build: ""
+            version: data.version || "",
+            build: data.build || ""
           };
         }
       }
