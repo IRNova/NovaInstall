@@ -128,7 +128,7 @@ async function handle(request, env) {
         headers: forwardHeaders,
         body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
         redirect: "manual"
-      }, 45000);
+      }, 150000);
       const responseHeaders = new Headers(headers);
       upstream.headers.forEach((value, key) => {
         if (!["set-cookie", "connection", "transfer-encoding", "content-encoding", "content-length"].includes(key.toLowerCase()) && !key.toLowerCase().startsWith("access-control-")) {
@@ -138,7 +138,7 @@ async function handle(request, env) {
       responseHeaders.set("Cache-Control", "no-store");
       return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
     } catch (error) {
-      return json({ success: false, errors: [{ message: error && error.name === "AbortError" ? "Cloudflare API request timed out" : "Cloudflare API proxy failed" }] }, 502, headers);
+      return json({ success: false, errors: [{ message: error && error.name === "AbortError" ? "Cloudflare API proxy timed out after 150 seconds" : "Cloudflare API proxy failed: " + String(error && error.message || error).slice(0, 240) }] }, 502, headers);
     }
   }
 
