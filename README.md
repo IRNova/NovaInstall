@@ -1,54 +1,49 @@
 # NovaInstall
 
-نصب کامل و بی‌نقص **[NovaWorker](https://github.com/IRNova/NovaWorker)** روی Cloudflare.
+نصب و پشتیبانی **Nova** روی Cloudflare — وب، دسکتاپ، و بات تلگرام.
 
-<p align="center">
-  <img src="assets/logo-mark.svg" width="88" alt="Nova Worker" />
-</p>
+این ریپو **منبع واحد** برای سه کانال نصب است:
 
-این ریپو **فقط** برای نصب سورس رسمی NovaWorker است:
+| پوشه / بخش | سابق | کاربرد |
+|------------|------|--------|
+| ریشه + `proxy/` + `index.html` | NovaInstall | نصب **وب** از GitHub Pages |
+| `desktop/` | [Nova-Wizard](https://github.com/IRNova/Nova-Wizard) | نصب **دسکتاپ** با OAuth (Python / EXE) |
+| `bot/` | [nova-install-bot](https://github.com/IRNova/nova-install-bot) | **بات تلگرام** نصب و پشتیبانی |
 
-`https://github.com/IRNova/NovaWorker` → `_worker.js`
+سورس Worker هدف: [`IRNova/NovaWorker`](https://github.com/IRNova/NovaWorker)
 
-## دو روش نصب
-
-| روش | دستگاه | احراز هویت | لینک |
-|------|--------|------------|------|
-| **وب** | ویندوز / لینوکس / موبایل | توکن API | https://irnova.github.io/NovaInstall/ |
-| **دسکتاپ** | ویندوز (EXE) / Python | OAuth کلودفلر | [`desktop/`](./desktop/) |
-
-هر دو مسیر:
-
-1. دانلود `_worker.js` از **IRNova/NovaWorker**
-2. ساخت KV + آپلود Worker با نام تصادفی
-3. نوشتن `install.json` (رمز ادمین)
-4. فعال‌سازی `workers.dev` و دادن لینک ورود
-5. ثبت در [Nova Control](https://nova-control.altramax083.workers.dev/)
-
-## نصب وب (پیشنهادی)
+## نصب وب
 
 **https://irnova.github.io/NovaInstall/**
 
 ## نصب دسکتاپ
 
 ```bash
-cd desktop
-python3 nova_wizard.py
+cd desktop && python3 nova_wizard.py
 ```
 
-EXE موقت: [NovaWizard.exe](https://github.com/IRNova/Nova-Wizard/releases/download/V1.0.0/NovaWizard.exe)
+## بات تلگرام
+
+کد کامل در `bot/` — دیپلوی با Wrangler روی حساب Cloudflare مربوط به بات.
 
 ## ساختار
 
 ```
 NovaInstall/
-├── index.html    # لودر GitHub Pages
-├── proxy/        # پروکسی نصب وب
-├── desktop/      # نصب OAuth (سابق Nova Wizard → الان NovaWorker)
+├── index.html          # UI نصب وب (GitHub Pages)
+├── proxy/              # پروکسی نصب وب
+├── desktop/            # ویزارد OAuth (ادغام‌شده از Nova-Wizard)
+├── bot/                # بات تلگرام (ادغام‌شده از nova-install-bot)
 ├── scripts/
 └── assets/
 ```
 
+## ادغام
+
+ریپوهای `Nova-Wizard` و `nova-install-bot` می‌توانند آرشیو/حذف شوند؛ کپی کامل کد داخل همین ریپو نگه داشته شده است.
+
+جزئیات: [MERGE-SOURCES.md](./MERGE-SOURCES.md)
+
 ## لایسنس
 
-MIT — خود NovaWorker تابع لایسنس ریپوی خودش است.
+MIT (جزئیات هر زیرپوشه در صورت تفاوت ذکر شده)
