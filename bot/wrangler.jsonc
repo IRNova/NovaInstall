@@ -1,0 +1,6 @@
+{
+  "name": "nova-install-bot",
+  "main": "src/index.js",
+  "compatibility_date": "2025-11-04",
+  "workers_dev": true
+}
