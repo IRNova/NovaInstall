@@ -4,267 +4,64 @@
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
 <meta name="robots" content="noindex,nofollow"/>
-<title>Nova — نصب</title>
+<title>Nova Worker — نصب آسان</title>
+<link rel="icon" type="image/svg+xml" href="assets/logo-mark.svg"/>
+<link rel="preconnect" href="https://nameless-rain-87c6.altramax083.workers.dev" crossorigin/>
 <style>
-:root{
-  --bg:#f3f5fa;--card:#fff;--bd:#e5e9f0;--tx:#0f172a;--mu:#64748b;--ac:#0ea5c4;--ac2:#7c3aed;
-  --ok:#16a34a;--bad:#e11d48;--soft:#f8fafc;
-  --grad:linear-gradient(120deg,#0891b2,#7c3aed);
-  --shadow:0 10px 40px rgba(15,23,42,.08);
+@font-face{
+  font-family:'Vazirmatn';
+  src:url('assets/vazirmatn-var.woff2') format('woff2');
+  font-weight:100 900;
+  font-style:normal;
+  font-display:swap;
 }
-*{box-sizing:border-box}
-html,body{margin:0;padding:0}
-body{
-  min-height:100vh;background:var(--bg);color:var(--tx);
-  font-family:Tahoma,"Segoe UI",system-ui,-apple-system,sans-serif;
-  font-size:15px;line-height:1.75;
-}
-body::before{
-  content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
-  background:
-    radial-gradient(700px 380px at 10% -10%,rgba(14,165,196,.14),transparent 60%),
-    radial-gradient(600px 360px at 95% 0%,rgba(124,58,237,.12),transparent 55%);
-}
-.wrap{max-width:560px;margin:0 auto;padding:28px 18px 48px}
-.brand{display:flex;align-items:center;gap:12px;margin-bottom:22px}
-.logo{
-  width:44px;height:44px;border-radius:14px;background:#fff;border:1px solid var(--bd);
-  display:grid;place-items:center;box-shadow:var(--shadow);font-weight:800;color:var(--ac);
-}
-.brand h1{margin:0;font-size:18px;font-weight:800}
-.brand p{margin:0;font-size:12px;color:var(--mu)}
-.card{
-  background:var(--card);border:1px solid var(--bd);border-radius:20px;
-  padding:22px 20px;box-shadow:var(--shadow);margin-bottom:16px;
-}
-.card h2{margin:0 0 8px;font-size:17px;font-weight:800}
-.card .sub{margin:0 0 16px;color:var(--mu);font-size:13px}
-label{display:block;font-size:12px;font-weight:700;color:var(--mu);margin:0 0 6px}
-textarea,input,select{
-  width:100%;padding:12px 14px;border-radius:12px;border:1px solid var(--bd);
-  font:inherit;background:var(--soft);color:var(--tx);
-}
-textarea{min-height:96px;resize:vertical;direction:ltr;text-align:left}
-.btn{
-  display:inline-flex;align-items:center;justify-content:center;gap:8px;
-  border:0;border-radius:12px;padding:12px 18px;font:inherit;font-weight:800;cursor:pointer;
-  width:100%;margin-top:14px;
-}
-.btn-primary{background:var(--grad);color:#fff}
-.btn-ghost{background:var(--soft);color:var(--tx);border:1px solid var(--bd)}
-.btn:disabled{opacity:.6;cursor:wait}
-.err{
-  display:none;margin-top:12px;padding:10px 12px;border-radius:12px;
-  background:rgba(225,29,72,.07);border:1px solid rgba(225,29,72,.2);color:var(--bad);
-  font-size:13px;font-weight:700;
-}
-.hidden{display:none!important}
-.steps{display:flex;flex-direction:column;gap:10px;margin-top:8px}
-.step{
-  display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:14px;
-  border:1px solid var(--bd);background:var(--soft);
-}
-.step .dot{
-  width:28px;height:28px;border-radius:50%;display:grid;place-items:center;
-  font-size:12px;font-weight:800;background:#e2e8f0;color:#475569;flex:0 0 auto;
-}
-.step.run .dot{background:rgba(14,165,196,.15);color:var(--ac)}
-.step.ok .dot{background:rgba(22,163,74,.15);color:var(--ok)}
-.step.bad .dot{background:rgba(225,29,72,.12);color:var(--bad)}
-.step .txt{flex:1;min-width:0}
-.step .title{font-weight:800;font-size:13.5px}
-.step .detail{font-size:12px;color:var(--mu)}
-.bar{height:8px;background:#e8edf5;border-radius:99px;overflow:hidden;margin:14px 0 4px}
-.bar>i{display:block;height:100%;width:0;background:var(--grad);transition:width .35s}
-.result a{color:var(--ac);font-weight:700;word-break:break-all}
-code{direction:ltr;display:inline-block;background:#f1f5f9;padding:2px 8px;border-radius:8px;font-size:13px}
-.muted{color:var(--mu);font-size:12px}
-.account-chip{
-  display:flex;align-items:center;gap:10px;padding:12px;border-radius:14px;
-  border:1px solid var(--bd);background:var(--soft);margin-bottom:8px;
-}
+body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:'Vazirmatn',Tahoma,system-ui,sans-serif;background:#f4f6fb;color:#101622}
+.box{text-align:center;padding:28px;max-width:400px}
+.spin{width:28px;height:28px;border:3px solid #dde2eb;border-top-color:#0ea5c4;border-radius:50%;animation:s .7s linear infinite;margin:0 auto 14px}
+@keyframes s{to{transform:rotate(360deg)}}
+p{margin:0;font-size:14px;color:#445066;line-height:1.7}
+a{color:#0ea5c4;font-weight:700}
+.btn{display:inline-block;margin-top:14px;padding:10px 16px;border-radius:12px;background:linear-gradient(120deg,#0891b2,#7c3aed);color:#fff;text-decoration:none;font-size:13px;font-weight:700}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <div class="brand">
-    <div class="logo">N</div>
-    <div>
-      <h1>Nova Install</h1>
-      <p>نصب سریع پنل روی Cloudflare</p>
-    </div>
-  </div>
-
-  <section class="card" id="screenAuth">
-    <h2>۱. اتصال به حساب</h2>
-    <p class="sub">فقط توکن API را وارد کن. هیچ فایلی از دستگاهت خوانده یا آپلود نمی‌شود.</p>
-    <label for="token">Cloudflare API Token</label>
-    <textarea id="token" placeholder="cfat_…" autocomplete="off" spellcheck="false"></textarea>
-    <button class="btn btn-primary" id="btnAuth" type="button">بررسی اتصال</button>
-    <div class="err" id="authErr"></div>
-    <p class="muted" style="margin-top:12px">توکن فقط برای ساخت Worker و KV روی حساب خودت استفاده می‌شود.</p>
-  </section>
-
-  <section class="card hidden" id="screenReady">
-    <h2>۲. نصب پنل</h2>
-    <p class="sub">اتصال برقرار است. برای ساخت Worker و دیتابیس، نصب را بزن.</p>
-    <div class="account-chip" id="accountChip">—</div>
-    <button class="btn btn-primary" id="btnInstall" type="button">شروع نصب</button>
-    <button class="btn btn-ghost" id="btnBack" type="button">تعویض توکن</button>
-  </section>
-
-  <section class="card hidden" id="screenProgress">
-    <h2>در حال نصب</h2>
-    <p class="sub" id="progressSub">لطفاً صبر کن…</p>
-    <div class="bar"><i id="bar"></i></div>
-    <div class="steps" id="steps">
-      <div class="step" data-s="prepare"><div class="dot">1</div><div class="txt"><div class="title">آماده‌سازی</div><div class="detail">—</div></div></div>
-      <div class="step" data-s="kv"><div class="dot">2</div><div class="txt"><div class="title">ساخت دیتابیس (KV)</div><div class="detail">—</div></div></div>
-      <div class="step" data-s="worker"><div class="dot">3</div><div class="txt"><div class="title">ساخت Worker</div><div class="detail">—</div></div></div>
-      <div class="step" data-s="config"><div class="dot">4</div><div class="txt"><div class="title">تنظیم رمز و کانفیگ</div><div class="detail">—</div></div></div>
-      <div class="step" data-s="done"><div class="dot">5</div><div class="txt"><div class="title">اتمام</div><div class="detail">—</div></div></div>
-    </div>
-    <div class="err" id="installErr"></div>
-  </section>
-
-  <section class="card hidden" id="screenResult">
-    <h2>نصب موفق</h2>
-    <p class="sub">پنل آماده است. این اطلاعات را ذخیره کن.</p>
-    <p>لینک ورود:<br/><a id="loginUrl" href="#" target="_blank" rel="noopener">—</a></p>
-    <p>رمز ادمین: <code id="password">—</code></p>
-    <p class="muted" id="workerName">—</p>
-    <button class="btn btn-ghost" id="btnAgain" type="button">نصب جدید</button>
-  </section>
-</div>
+<div class="box"><div class="spin" id="spin"></div><p id="msg">بارگذاری صفحهٔ نصب…</p></div>
 <script>
-(function(){
-  var PROXY = "https://nameless-rain-87c6.altramax083.workers.dev";
-  var PANEL = "https://nova-panel.github.io";
-  var token = "";
-  var accountId = "";
-  var accountName = "";
-
-  function $(id){ return document.getElementById(id); }
-  function show(id){
-    ["screenAuth","screenReady","screenProgress","screenResult"].forEach(function(s){
-      $(s).classList.toggle("hidden", s !== id);
-    });
+(async function () {
+  var UI = "https://nameless-rain-87c6.altramax083.workers.dev";
+  var msg = document.getElementById("msg");
+  var spin = document.getElementById("spin");
+  function fail(reason) {
+    try { spin.style.display = "none"; } catch (e) {}
+    msg.innerHTML = "بارگذاری طول کشید." +
+      (reason ? "<br/><small style='color:#8a93a6'>" + reason + "</small>" : "") +
+      "<br/><a class='btn' href='" + UI + "/'>باز کردن صفحهٔ نصب</a>";
   }
-  function setErr(el, msg){
-    el.style.display = msg ? "block" : "none";
-    el.textContent = msg || "";
+  function fetchWithTimeout(url, ms) {
+    var ctrl = new AbortController();
+    var t = setTimeout(function () { ctrl.abort(); }, ms);
+    return fetch(url, {
+      headers: { "Accept": "text/html" },
+      cache: "no-store",
+      mode: "cors",
+      signal: ctrl.signal
+    }).finally(function () { clearTimeout(t); });
   }
-  function setStep(key, state, detail){
-    var node = document.querySelector('.step[data-s="'+key+'"]');
-    if(!node) return;
-    node.classList.remove("run","ok","bad");
-    if(state) node.classList.add(state);
-    if(detail != null) node.querySelector(".detail").textContent = detail;
+  try {
+    fetch(UI + "/health?warm=1&_t=" + Date.now(), { cache: "no-store", mode: "cors" }).catch(function () {});
+  } catch (e) {}
+  try {
+    var res = await fetchWithTimeout(UI + "/?t=" + Date.now(), 20000);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    var html = await res.text();
+    if (html.length < 5000 || html.indexOf("entry-grid") === -1) throw new Error("bad ui");
+    document.open();
+    document.write(html);
+    document.close();
+  } catch (err) {
+    console.error(err);
+    fail(String(err && err.message ? err.message : err));
   }
-  function setBar(p){ $("bar").style.width = Math.max(0, Math.min(100, p)) + "%"; }
-
-  function mapStep(step, status, detail){
-    var key = "prepare";
-    if(step === "auth" || step === "account" || step === "subdomain") key = "prepare";
-    else if(step === "kv" || step === "source") key = "kv";
-    else if(step === "upload" || step === "worker") key = "worker";
-    else if(step === "config") key = "config";
-    else if(step === "verify" || step === "done") key = "done";
-
-    if(status === "ok") setStep(key, "ok", detail || "انجام شد");
-    else if(status === "fail") setStep(key, "bad", detail || "خطا");
-    else setStep(key, "run", detail || "در حال اجرا…");
-
-    var order = ["prepare","kv","worker","config","done"];
-    var idx = order.indexOf(key);
-    setBar(8 + idx * 18 + (status === "ok" ? 10 : 4));
-  }
-
-  $("btnAuth").onclick = async function(){
-    setErr($("authErr"), "");
-    token = ($("token").value || "").trim();
-    if(token.length < 20){ setErr($("authErr"), "توکن معتبر وارد کن"); return; }
-    $("btnAuth").disabled = true;
-    $("btnAuth").textContent = "در حال بررسی…";
-    try{
-      var res = await fetch(PROXY + "/api/auth", {
-        method: "POST",
-        headers: { "Authorization": "Bearer " + token, "Content-Type": "application/json", "Accept": "application/json" },
-        body: "{}"
-      });
-      var data = await res.json().catch(function(){ return {}; });
-      if(!res.ok || !data.ok){
-        throw new Error(data.error || data.message || ("HTTP " + res.status));
-      }
-      var acc = (data.accounts && data.accounts[0]) || data.account;
-      if(!acc) throw new Error("حسابی یافت نشد");
-      accountId = acc.id;
-      accountName = acc.name || acc.id;
-      $("accountChip").textContent = accountName + " · " + String(acc.id).slice(0, 8);
-      show("screenReady");
-    }catch(e){
-      setErr($("authErr"), String(e.message || e));
-    }finally{
-      $("btnAuth").disabled = false;
-      $("btnAuth").textContent = "بررسی اتصال";
-    }
-  };
-
-  $("btnBack").onclick = function(){ show("screenAuth"); };
-
-  $("btnInstall").onclick = async function(){
-    show("screenProgress");
-    setErr($("installErr"), "");
-    ["prepare","kv","worker","config","done"].forEach(function(k){ setStep(k, "", "—"); });
-    setBar(4);
-    setStep("prepare", "run", "شروع…");
-    $("progressSub").textContent = "ساخت روی حساب Cloudflare شما — بدون دانلود از مرورگر";
-    try{
-      var res = await fetch(PROXY + "/install", {
-        method:"POST",
-        headers:{
-          "Authorization":"Bearer "+token,
-          "Content-Type":"application/json",
-          "Accept":"application/x-ndjson"
-        },
-        body: JSON.stringify({ accountId: accountId, panelUrl: PANEL, compatibilityDate: "2025-11-04" })
-      });
-      if(!res.ok){
-        var tx = await res.text();
-        throw new Error("HTTP "+res.status+" "+tx.slice(0,180));
-      }
-      var reader = res.body.getReader();
-      var dec = new TextDecoder();
-      var buf = "";
-      var outcome = null;
-      while(true){
-        var chunk = await reader.read();
-        if(chunk.done) break;
-        buf += dec.decode(chunk.value, { stream: true });
-        var lines = buf.split("\n"); buf = lines.pop();
-        for(var i=0;i<lines.length;i++){
-          var line = lines[i].trim(); if(!line) continue;
-          var ev; try{ ev = JSON.parse(line); }catch(e){ continue; }
-          if(ev.type === "step") mapStep(ev.step, ev.status, ev.detail);
-          else if(ev.type === "error") throw new Error(ev.message || "install_failed");
-          else if(ev.type === "result" && ev.result) outcome = ev.result;
-        }
-      }
-      if(!outcome) throw new Error("نصب ناتمام ماند — دوباره تلاش کن");
-      setStep("done", "ok", "آماده");
-      setBar(100);
-      $("loginUrl").textContent = outcome.loginUrl || "";
-      $("loginUrl").href = outcome.loginUrl || "#";
-      $("password").textContent = outcome.password || "";
-      $("workerName").textContent = "Worker: " + (outcome.worker || "");
-      show("screenResult");
-    }catch(e){
-      setErr($("installErr"), String(e.message || e));
-      $("progressSub").textContent = "نصب متوقف شد";
-    }
-  };
-
-  $("btnAgain").onclick = function(){ location.reload(); };
 })();
 </script>
 </body>
