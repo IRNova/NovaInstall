@@ -31,6 +31,7 @@
 
 const CF_API = "https://api.cloudflare.com/client/v4";
 const VERSION = "2.4.0";
+const JOB_RETENTION_MS = 24 * 60 * 60 * 1000;
 // Free Workers allow only 50 subrequests per invocation. Staging a ~5 MB
 // source in 128 KB chunks costs 40 writes here and 40 reads + 40 deletes in
 // the bootstrap, which exceeds that budget and silently kills the install.
@@ -1305,7 +1306,16 @@ export class InstallJob {
 
   async alarm() {
     const job = await this.ctx.storage.get("job");
-    if (!job || !job.token) return;
+    if (!job) return;
+    if (!job.token) {
+      const finishedAt = Number(job.finishedAt || 0);
+      if (finishedAt && Date.now() >= finishedAt + JOB_RETENTION_MS) {
+        await this.ctx.storage.delete(["job", "events", "status"]);
+      } else if (finishedAt) {
+        await this.ctx.storage.setAlarm(finishedAt + JOB_RETENTION_MS);
+      }
+      return;
+    }
     await this.ctx.storage.put("status", { ok: true, status: "running", events: await this.ctx.storage.get("events") || [], cursor: 0 });
     const push = async (event) => {
       const events = await this.ctx.storage.get("events") || [];
@@ -1345,7 +1355,11 @@ export class InstallJob {
       await this.ctx.storage.put("job", {
         status: (await this.ctx.storage.get("status") || {}).status || "finished",
         createdAt: current.createdAt || "",
+        finishedAt: Date.now(),
       });
+      // Result/password can be retrieved for one day, then the whole job record
+      // is deleted automatically to avoid retaining credentials indefinitely.
+      await this.ctx.storage.setAlarm(Date.now() + JOB_RETENTION_MS);
     }
   }
 }
