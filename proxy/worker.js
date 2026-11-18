@@ -184,15 +184,6 @@ if (path === "/health") {
       });
     }
 
-    if (path === "/stats" && request.method === "GET") {
-      if (!env.INSTALL_STATS) return json({ ok: false, error: "stats_not_configured" }, 503, cors.headers);
-      const stub = env.INSTALL_STATS.get(env.INSTALL_STATS.idFromName("global"));
-      const response = await stub.fetch("https://install-stats/count");
-      return json(await response.json(), 200, { ...cors.headers, "Cache-Control": "no-store" });
-    }
-    if (path === "/stats/page" && request.method === "GET") {
-      return new Response(INSTALL_STATS_HTML, { status: 200, headers: { ...cors.headers, "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
-    }
     if (path === "/probe") return probe(url, cors.headers, env);
 
     if (path === "/preflight") {
@@ -383,7 +374,19 @@ async function install(request, env, cors, ctx) {
       closed = true;
     }
     if (payload && payload.type === "result" && payload.result) {
-      try { await reportInstall(payload.result, env); } catch (_) {}
+      const result = payload.result;
+      if (result.verified === true &&
+          /^https:\/\//i.test(String(result.loginUrl || "")) &&
+          /^https:\/\//i.test(String(result.adminUrl || "")) &&
+          typeof result.password === "string" && result.password.length > 0) {
+        try {
+          await reportSuccessfulInstallToGitHub({
+            eventId: crypto.randomUUID(),
+            version: String(result.version || "").slice(0, 80),
+            build: String(result.build || "").slice(0, 80),
+          }, env);
+        } catch (_) {}
+      }
     }
   };
 
@@ -432,34 +435,31 @@ async function install(request, env, cors, ctx) {
 }
 
 
-async function reportInstall(result, env) {
-  if (!result || !env || !env.NOVA_CONTROL_INGEST_KEY) return;
-  const body = JSON.stringify({
-    worker: result.worker || "",
-    loginUrl: result.loginUrl || "",
-    adminUrl: result.adminUrl || "",
-    version: result.version || "",
-    build: result.build || "",
-    account: result.account || "",
-    accountId: result.accountId || "",
+async function reportSuccessfulInstallToGitHub(event, env) {
+  const token = String(env && env.NOVA_GITHUB_STATS_TOKEN || "").trim();
+  if (!token || !event || !event.eventId) return;
+  const response = await fetch("https://api.github.com/repos/IRNova/NovaInstall/dispatches", {
+    method: "POST",
+    headers: {
+      "Accept": "application/vnd.github+json",
+      "Authorization": "Bearer " + token,
+      "X-GitHub-Api-Version": "2022-11-28",
+      "Content-Type": "application/json",
+      "User-Agent": "NovaInstall-Stats",
+    },
+    body: JSON.stringify({
+      event_type: "nova_install_success",
+      client_payload: {
+        event_id: String(event.eventId).slice(0, 128),
+        version: String(event.version || "").slice(0, 80),
+        build: String(event.build || "").slice(0, 80),
+      },
+    }),
   });
-  const headers = {
-    "Content-Type": "application/json",
-    "X-Nova-Ingest-Key": env.NOVA_CONTROL_INGEST_KEY,
-    Accept: "application/json",
-  };
-  const controlUrl = String(env.NOVA_CONTROL_URL || "https://nova-control.altramax083.workers.dev").replace(/\/+$/, "");
-  try {
-    if (env.CONTROL && typeof env.CONTROL.fetch === "function") {
-      await env.CONTROL.fetch(
-        new Request("https://nova-control/ingest", { method: "POST", headers, body }),
-      );
-      return;
-    }
-  } catch (_) {}
-  try {
-    await fetch(controlUrl + "/ingest", { method: "POST", headers, body });
-  } catch (_) {}
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error("GitHub stats dispatch failed: " + response.status + " " + detail.slice(0, 200));
+  }
 }
 
 async function runInstall(config, token, send) {
@@ -1350,16 +1350,15 @@ export class InstallJob {
           /^https:\/\//i.test(String(result.loginUrl || "")) &&
           /^https:\/\//i.test(String(result.adminUrl || "")) &&
           typeof result.password === "string" && result.password.length > 0;
-        if (successful && this.env.INSTALL_STATS) {
+        if (successful) {
           try {
-            const stats = this.env.INSTALL_STATS.get(this.env.INSTALL_STATS.idFromName("global"));
-            await stats.fetch("https://install-stats/increment", {
-              method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ eventId: this.ctx.id.toString() }),
-            });
+            await reportSuccessfulInstallToGitHub({
+              eventId: this.ctx.id.toString(),
+              version: String(result.version || "").slice(0, 80),
+              build: String(result.build || "").slice(0, 80),
+            }, this.env);
           } catch (_) {}
         }
-        try { await reportInstall(event.result, this.env); } catch (_) {}
       }
     };
 
@@ -1392,32 +1391,6 @@ export class InstallJob {
   }
 }
 
-
-export class InstallStats {
-  constructor(ctx, env) { this.ctx = ctx; this.env = env; }
-  async fetch(request) {
-    const url = new URL(request.url);
-    if (url.pathname === "/count" && request.method === "GET")
-      return json({ ok: true, successfulInstalls: Number(await this.ctx.storage.get("successfulInstalls") || 0) }, 200, { "Cache-Control": "no-store" });
-    if (url.pathname === "/increment" && request.method === "POST") {
-      let payload; try { payload = await request.json(); } catch { return json({ ok: false }, 400, {}); }
-      const eventId = String(payload && payload.eventId || "");
-      if (!/^[a-zA-Z0-9_-]{1,128}$/.test(eventId)) return json({ ok: false }, 400, {});
-      const marker = "counted:" + eventId;
-      let count = 0;
-      await this.ctx.storage.transaction(async (txn) => {
-        const seen = await txn.get(marker);
-        const current = Number(await txn.get("successfulInstalls") || 0);
-        if (!seen) { count = current + 1; await txn.put(marker, Date.now()); await txn.put("successfulInstalls", count); }
-        else count = current;
-      });
-      return json({ ok: true, successfulInstalls: count }, 200, {});
-    }
-    return json({ ok: false, error: "not_found" }, 404, {});
-  }
-}
-const INSTALL_STATS_HTML = `<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>آمار نصب Nova Worker</title>
-<style>*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:#f4f6fb;color:#101622;font-family:Tahoma,Arial,sans-serif}main{width:min(100%,520px);background:#fff;border:1px solid #e5e9f2;border-radius:24px;padding:30px;box-shadow:0 18px 55px #17233b12;text-align:center}small{color:#69758a}h1{font-size:22px;margin:0 0 12px}.num{font-size:clamp(54px,14vw,86px);font-weight:800;color:#0891b2;line-height:1.4}.note{font-size:13px;color:#69758a;line-height:2;margin-top:12px}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#10b981;margin-left:6px}a{color:#0891b2;text-decoration:none;font-size:13px;font-weight:bold}</style></head><body><main><small>Nova Worker · Public statistics</small><h1>آمار نصب‌های موفق</h1><div class="num" id="count">—</div><div><span class="dot"></span><small id="state">در حال دریافت آمار…</small></div><p class="note">فقط نصب‌هایی شمارش می‌شوند که تأیید نهایی شده و آدرس ورود، آدرس مدیریت و رمز تولید شده باشد.<br>هیچ رمز، توکن یا اطلاعات حسابی در این صفحه ذخیره نمی‌شود.</p><p><a href="/">بازگشت به نصب‌کننده</a></p></main><script>(async function(){var c=document.getElementById("count"),s=document.getElementById("state");try{var r=await fetch("/stats",{cache:"no-store"});if(!r.ok)throw Error();var d=await r.json();if(!d.ok)throw Error();c.textContent=Number(d.successfulInstalls||0).toLocaleString("fa-IR");s.textContent="آمار به‌روز";}catch(e){c.textContent="—";s.textContent="دریافت آمار ممکن نشد";}})();</script></body></html>`;
 
 function randomInt(max) {
   const array = new Uint32Array(1);
