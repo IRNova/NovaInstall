@@ -9,6 +9,11 @@ name: Deploy Installer Proxy
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "proxy/**"
+      - ".github/workflows/deploy-proxy.yml"
 
 permissions:
   contents: read
