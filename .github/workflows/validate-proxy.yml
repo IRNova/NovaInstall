@@ -1,0 +1,36 @@
+name: Validate Installer Proxy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "proxy/**"
+      - ".github/workflows/validate-proxy.yml"
+  pull_request:
+    paths:
+      - "proxy/**"
+      - ".github/workflows/validate-proxy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Check Worker JavaScript syntax
+        run: node --check proxy/worker.js
+
+      - name: Validate Wrangler configuration and bundle
+        working-directory: proxy
+        run: npx --yes wrangler@4 deploy --dry-run --outdir /tmp/nova-install-dry-run
