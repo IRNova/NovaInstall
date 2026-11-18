@@ -30,6 +30,24 @@
 
 Workflow از `proxy/wrangler.toml` استفاده می‌کند و Migration مربوط به `InstallJob` را همراه Deploy اعمال می‌کند. برای حساب‌های Workers Free از SQLite-backed Durable Object استفاده شده است؛ این backend در پلن Free پشتیبانی می‌شود. هر Job توکن Cloudflare کاربر را فقط تا پایان نصب به‌صورت موقت در فضای ذخیره‌سازی Durable Object نگه می‌دارد و پس از اتمام یا شکست حذف می‌کند. نتیجهٔ نصب و رمز تحویلی حداکثر ۲۴ ساعت برای اتصال مجدد باقی می‌ماند و سپس خودکار پاک می‌شود.
 
+### آمار نصب‌های موفق (GitHub-only)
+
+صفحهٔ عمومی آمار: **https://irnova.github.io/NovaInstall/stats.html**
+
+- دادهٔ شمارنده فقط در فایل `stats.json` همین مخزن ذخیره می‌شود؛ Durable Object یا سرویس آماری جداگانه استفاده نمی‌شود.
+- نصب‌کننده فقط پس از تأیید اجرای Worker و وجود آدرس ورود، آدرس مدیریت و رمز تولیدشده، رویداد موفقیت را به GitHub ارسال می‌کند.
+- GitHub Actions رویدادها را به‌صورت سریالی پردازش می‌کند، شناسهٔ رویداد را برای جلوگیری از شمارش تکراری بررسی می‌کند و `stats.json` را به‌روزرسانی می‌کند.
+- هیچ رمز، توکن Cloudflare، آدرس پنل یا شناسهٔ حسابی در فایل آمار ارسال یا ذخیره نمی‌شود.
+
+**تنظیم یک‌بارهٔ دسترسی GitHub برای Worker:**
+
+1. یک Fine-grained Personal Access Token فقط برای مخزن `IRNova/NovaInstall` بساز.
+2. دسترسی Repository permissions → **Contents: Read and write** را فعال کن.
+3. این توکن را به‌صورت Secret در تنظیمات Worker پروکسی با نام `NOVA_GITHUB_STATS_TOKEN` ثبت کن (از داشبورد Cloudflare یا دستور `wrangler secret put NOVA_GITHUB_STATS_TOKEN` در پوشهٔ `proxy`).
+4. توکن را در کد، GitHub Pages یا چت قرار نده. این توکن فقط سمت Worker نگهداری می‌شود.
+
+برای ثبت آمار، GitHub Actions از `GITHUB_TOKEN` داخلی با مجوز `contents: write` استفاده می‌کند. صفحهٔ آمار دادهٔ عمومی `stats.json` را مستقیماً از GitHub Pages می‌خواند.
+
 ### روند نصب
 
 - `POST /preflight`: اعتبار توکن، حساب و دسترسی APIهای Workers و KV را بدون ساخت منبع بررسی می‌کند؛ دریافت و اعتبارسنجی سورس GitHub داخل Job پس‌زمینه و پیش از ساخت KV انجام می‌شود.
