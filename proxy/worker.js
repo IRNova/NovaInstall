@@ -457,7 +457,7 @@ async function reportInstall(result, env) {
 async function runInstall(config, token, send) {
   let step = "auth";
   try {
-    await send({ type: "step", step: "auth", status: "running", detail: "checking token…" });
+    await send({ type: "step", step: "auth", status: "running", detail: "using token and account verified during preflight…" });
 
     // Reuse the account resolved by the read-only preflight; do not look it up again after confirmation.
     const account = config.accountId
