@@ -33,7 +33,7 @@ if (match) {
   }
 
   if (html) {
-    const scripts = [...html.matchAll(/<script\\b[^>]*>([\\s\\S]*?)<\\/script>/gi)]
+    const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)]
       .map((item) => item[1])
       .filter((item) => item.trim());
 
