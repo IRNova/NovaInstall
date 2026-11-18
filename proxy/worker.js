@@ -211,7 +211,7 @@ if (path === "/health") {
  */
 async function preflight(request, cors) {
   const auth = request.headers.get("Authorization") || "";
-  const token = auth.replace(/^Bearer\\s+/i, "").trim();
+  const token = auth.replace(/^Bearer\s+/i, "").trim();
   if (!token) return json({ ok: false, error: "missing_token", step: "auth" }, 401, cors);
 
   let body;
@@ -250,6 +250,7 @@ async function preflight(request, cors) {
     return json({
       ok: true,
       canInstall: true,
+      workerName: config.workerName,
       account: { id: account.id, name: account.name },
       token: { status: tokenInfo.status || "active" },
       checks: {
@@ -289,7 +290,7 @@ async function preflight(request, cors) {
       codes,
       needAccountId: Boolean(error.needAccountId),
       accounts: Array.isArray(error.accounts) ? error.accounts : undefined,
-    }, 400, cors);
+    }, error.needAccountId ? 409 : 400, cors);
   }
 }
 
