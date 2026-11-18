@@ -188,6 +188,36 @@ if (path === "/health") {
       return preflight(request, cors.headers);
     }
 
+    if (path === "/jobs" && request.method === "POST") {
+      if (!env.INSTALL_JOBS) return json({ ok: false, error: "durable_jobs_not_configured" }, 503, cors.headers);
+      const token = (request.headers.get("Authorization") || "").replace(/^Bearer\\s+/i, "").trim();
+      if (!token) return json({ ok: false, error: "missing_token" }, 401, cors.headers);
+      let jobConfig;
+      try { jobConfig = await request.json(); } catch { return json({ ok: false, error: "bad_json" }, 400, cors.headers); }
+      try {
+        const jobId = randomSlug(32);
+        const stub = env.INSTALL_JOBS.get(env.INSTALL_JOBS.idFromName(jobId));
+        const started = await stub.fetch("https://install-job/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token, config: normalizeConfig(jobConfig || {}) }),
+        });
+        const payload = await started.json();
+        return json({ ...payload, jobId }, started.status, cors.headers);
+      } catch (error) {
+        return json({ ok: false, error: "job_start_failed", message: error.message || String(error) }, 400, cors.headers);
+      }
+    }
+
+    const jobMatch = path.match(/^\\/jobs\\/([a-z0-9]{32})$/i);
+    if (jobMatch && request.method === "GET") {
+      if (!env.INSTALL_JOBS) return json({ ok: false, error: "durable_jobs_not_configured" }, 503, cors.headers);
+      const stub = env.INSTALL_JOBS.get(env.INSTALL_JOBS.idFromName(jobMatch[1]));
+      const response = await stub.fetch("https://install-job/status" + url.search, { method: "GET" });
+      const payload = await response.json();
+      return json(payload, response.status, cors.headers);
+    }
+
     if (path === "/install") {
       if (request.method !== "POST") {
         return json({ ok: false, error: "method_not_allowed" }, 405, cors.headers);
@@ -1217,6 +1247,101 @@ async function probe(url, cors, env) {
     );
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/**
+ * Durable install runner. The browser only creates a job and polls its status;
+ * the deployment continues in this Durable Object if the browser disconnects.
+ * The Cloudflare API token is kept only for the lifetime of the job and deleted
+ * from storage as soon as the job completes or fails.
+ */
+export class InstallJob {
+  constructor(ctx, env) {
+    this.ctx = ctx;
+    this.env = env;
+  }
+
+  async fetch(request) {
+    const url = new URL(request.url);
+    if (url.pathname === "/start" && request.method === "POST") {
+      const existing = await this.ctx.storage.get("job");
+      if (existing) return json({ ok: false, error: "job_already_started" }, 409, {});
+      let payload;
+      try { payload = await request.json(); } catch { return json({ ok: false, error: "bad_json" }, 400, {}); }
+      if (!payload || !payload.token || !payload.config) return json({ ok: false, error: "missing_job_data" }, 400, {});
+      await this.ctx.storage.put("job", {
+        token: String(payload.token),
+        config: payload.config,
+        status: "queued",
+        createdAt: new Date().toISOString(),
+      });
+      await this.ctx.storage.put("events", []);
+      await this.ctx.storage.put("status", { ok: true, status: "queued", events: [], cursor: 0 });
+      await this.ctx.storage.setAlarm(Date.now() + 100);
+      return json({ ok: true, status: "queued" }, 202, {});
+    }
+
+    if (url.pathname === "/status" && request.method === "GET") {
+      const status = await this.ctx.storage.get("status") || { ok: true, status: "queued" };
+      const events = status.events || [];
+      const after = Math.max(0, Number(url.searchParams.get("after") || 0));
+      return json({
+        ok: true,
+        status: status.status || "queued",
+        events: events.slice(after),
+        cursor: events.length,
+        result: status.result || null,
+        error: status.error || null,
+      }, 200, {});
+    }
+    return json({ ok: false, error: "not_found" }, 404, {});
+  }
+
+  async alarm() {
+    const job = await this.ctx.storage.get("job");
+    if (!job || !job.token) return;
+    await this.ctx.storage.put("status", { ok: true, status: "running", events: await this.ctx.storage.get("events") || [], cursor: 0 });
+    const push = async (event) => {
+      const events = await this.ctx.storage.get("events") || [];
+      events.push({ ...event, at: Date.now() });
+      if (events.length > 500) events.splice(0, events.length - 500);
+      await this.ctx.storage.put("events", events);
+      const previous = await this.ctx.storage.get("status") || {};
+      await this.ctx.storage.put("status", {
+        ...previous,
+        ok: true,
+        status: event.type === "result" ? "completed" : "running",
+        events,
+        result: event.type === "result" ? event.result : previous.result || null,
+      });
+      if (event.type === "result") {
+        try { await reportInstall(event.result, this.env); } catch (_) {}
+      }
+    };
+
+    try {
+      await runInstall(job.config, job.token, push);
+      const current = await this.ctx.storage.get("status") || {};
+      await this.ctx.storage.put("status", { ...current, ok: true, status: "completed" });
+    } catch (error) {
+      const failure = {
+        type: "error",
+        step: error.step || "install",
+        message: error.message || String(error),
+        codes: Array.isArray(error.codes) ? error.codes : [],
+      };
+      await push(failure);
+      const current = await this.ctx.storage.get("status") || {};
+      await this.ctx.storage.put("status", { ...current, ok: false, status: "failed", error: failure });
+    } finally {
+      // Never keep the user's Cloudflare API token after the job has finished.
+      const current = await this.ctx.storage.get("job") || {};
+      await this.ctx.storage.put("job", {
+        status: (await this.ctx.storage.get("status") || {}).status || "finished",
+        createdAt: current.createdAt || "",
+      });
+    }
   }
 }
 
