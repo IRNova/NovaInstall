@@ -16,3 +16,12 @@ class_name = "InstallJob"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["InstallJob"]
+
+# Aggregate successful-install counter and public statistics page.
+[[durable_objects.bindings]]
+name = "INSTALL_STATS"
+class_name = "InstallStats"
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["InstallStats"]
