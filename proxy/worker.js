@@ -195,8 +195,11 @@ if (path === "/health") {
 
     if (path === "/jobs" && request.method === "POST") {
       if (!env.INSTALL_JOBS) return json({ ok: false, error: "durable_jobs_not_configured" }, 503, cors.headers);
-      const token = (request.headers.get("Authorization") || "").replace(/^Bearer\\s+/i, "").trim();
+      const token = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
       if (!token) return json({ ok: false, error: "missing_token" }, 401, cors.headers);
+      if (token.length > 4096) return json({ ok: false, error: "token_too_large" }, 413, cors.headers);
+      const declared = Number(request.headers.get("content-length") || 0);
+      if (declared > MAX_INSTALL_BODY) return json({ ok: false, error: "body_too_large" }, 413, cors.headers);
       let jobConfig;
       try { jobConfig = await request.json(); } catch { return json({ ok: false, error: "bad_json" }, 400, cors.headers); }
       try {
@@ -249,6 +252,9 @@ async function preflight(request, cors) {
   const auth = request.headers.get("Authorization") || "";
   const token = auth.replace(/^Bearer\s+/i, "").trim();
   if (!token) return json({ ok: false, error: "missing_token", step: "auth" }, 401, cors);
+  if (token.length > 4096) return json({ ok: false, error: "token_too_large" }, 413, cors);
+  const declared = Number(request.headers.get("content-length") || 0);
+  if (declared > MAX_INSTALL_BODY) return json({ ok: false, error: "body_too_large" }, 413, cors);
 
   let body;
   try { body = await request.json(); }
