@@ -26,7 +26,7 @@
  */
 
 const CF_API = "https://api.cloudflare.com/client/v4";
-const VERSION = "2.3.16";
+const VERSION = "2.4.0";
 // Free Workers allow only 50 subrequests per invocation. Staging a ~5 MB
 // source in 128 KB chunks costs 40 writes here and 40 reads + 40 deletes in
 // the bootstrap, which exceeds that budget and silently kills the install.
@@ -181,6 +181,13 @@ if (path === "/health") {
 
     if (path === "/probe") return probe(url, cors.headers, env);
 
+    if (path === "/preflight") {
+      if (request.method !== "POST") {
+        return json({ ok: false, error: "method_not_allowed" }, 405, cors.headers);
+      }
+      return preflight(request, cors.headers);
+    }
+
     if (path === "/install") {
       if (request.method !== "POST") {
         return json({ ok: false, error: "method_not_allowed" }, 405, cors.headers);
@@ -194,6 +201,97 @@ if (path === "/health") {
     return proxyApi(request, url, cors.headers);
   },
 };
+
+/* -------------------------------------------------------------- preflight */
+
+/**
+ * Read-only account and source checks. This deliberately creates no resources:
+ * the installer can reject invalid tokens, wrong accounts, missing read access,
+ * inaccessible KV/Workers APIs, and broken GitHub source before mutation starts.
+ */
+async function preflight(request, cors) {
+  const auth = request.headers.get("Authorization") || "";
+  const token = auth.replace(/^Bearer\\s+/i, "").trim();
+  if (!token) return json({ ok: false, error: "missing_token", step: "auth" }, 401, cors);
+
+  let body;
+  try { body = await request.json(); }
+  catch { return json({ ok: false, error: "bad_json" }, 400, cors); }
+
+  let config;
+  try { config = normalizeConfig(body || {}); }
+  catch (error) { return json({ ok: false, error: "bad_config", message: error.message }, 400, cors); }
+
+  try {
+    const tokenInfo = await cf(token, "GET", "/user/tokens/verify");
+    if (!tokenInfo || String(tokenInfo.status || "").toLowerCase() !== "active") {
+      return json({ ok: false, error: "token_not_active", step: "auth", tokenStatus: tokenInfo && tokenInfo.status || "unknown" }, 401, cors);
+    }
+
+    const account = await resolveAccount(config.accountId, token, async () => {});
+    if (!account) {
+      return json({ ok: false, error: "account_required", step: "account" }, 409, cors);
+    }
+
+    const checks = await Promise.all([
+      cf(token, "GET", `/accounts/${account.id}/workers/scripts?per_page=100`),
+      cf(token, "GET", `/accounts/${account.id}/storage/kv/namespaces?per_page=100`),
+      cf(token, "GET", `/accounts/${account.id}/workers/subdomain`, undefined, { allow404: true }),
+      loadSource(config.sourceUrl),
+    ]);
+
+    const scripts = Array.isArray(checks[0]) ? checks[0] : [];
+    const namespaces = Array.isArray(checks[1]) ? checks[1] : [];
+    const subdomain = checks[2] && checks[2].subdomain || "";
+    const source = checks[3];
+    const existingWorker = scripts.some((item) => item && item.id === config.workerName);
+    const existingKv = namespaces.find((item) => item && item.title === config.workerName + "-kv") || null;
+
+    return json({
+      ok: true,
+      canInstall: true,
+      account: { id: account.id, name: account.name },
+      token: { status: tokenInfo.status || "active" },
+      checks: {
+        token: "ok",
+        account: "ok",
+        workersApi: "ok",
+        kvApi: "ok",
+        source: "ok",
+        workersDev: subdomain ? "ready" : "will_be_created",
+      },
+      resources: {
+        workerCountVisible: scripts.length,
+        kvCountVisible: namespaces.length,
+        workerNameAlreadyExists: existingWorker,
+        kvNamespaceAlreadyExists: Boolean(existingKv),
+      },
+      source: {
+        url: source.url,
+        version: source.version || "",
+        build: source.build || "",
+        bytes: source.bytes.byteLength,
+      },
+      limitations: [
+        "This is a read-only preflight; Cloudflare does not expose a reliable read-only test for every future write permission or account deployment failure.",
+        "A 1101 diagnosis requires a real deployed Worker runtime check; it cannot be guaranteed from the account email or token alone.",
+      ],
+    }, 200, cors);
+  } catch (error) {
+    const codes = Array.isArray(error.codes) ? error.codes : [];
+    const step = error.step || (error.status === 401 || codes.includes(1000) || codes.includes(9109) || codes.includes(6003) ? "auth" : "preflight");
+    return json({
+      ok: false,
+      error: "preflight_failed",
+      step,
+      message: error.message || String(error),
+      status: error.status || 0,
+      codes,
+      needAccountId: Boolean(error.needAccountId),
+      accounts: Array.isArray(error.accounts) ? error.accounts : undefined,
+    }, 400, cors);
+  }
+}
 
 /* ------------------------------------------------------------------ install */
 
@@ -422,11 +520,14 @@ async function runInstall(config, token, send) {
     step = "verify";
     await send({ type: "step", step, status: "running", detail: "checking deployed Worker…" });
     const status = await verifyWorker(publicBase);
+    const verified = Boolean(status && !status._verificationFailed && status.kvOk && status.admin);
     await send({
       type: "step",
       step,
-      status: status ? "ok" : "skip",
-      detail: status ? "ready" : "edge still warming — login may take a few seconds",
+      status: verified ? "ok" : "fail",
+      detail: verified ? "Worker runtime + KV + admin verified" :
+        (status && status.detail === "cloudflare_1101" ? "Cloudflare Error 1101: Worker threw an exception" :
+        "deployment exists but runtime verification failed: " + String((status && status.detail) || "unknown")),
     });
 
     const resultPayload = {
@@ -441,7 +542,7 @@ async function runInstall(config, token, send) {
       loginUrl: publicBase + "/login",
       adminUrl: publicBase + "/admin",
       password: credentials.password,
-      verified: Boolean(status),
+      verified,\n      verification: status && status._verificationFailed ? { httpStatus: status.httpStatus, detail: status.detail } : undefined,
     };
     await send({ type: "result", result: resultPayload });
   } catch (error) {
@@ -814,24 +915,37 @@ async function enablePublicUrl(accountId, workerName, token, preparedSubdomain =
 }
 
 async function verifyWorker(publicBase) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 2500);
-  try {
-    const response = await fetch(`${publicBase}/install/status?_t=${Date.now()}`, {
-      headers: { Accept: "application/json", "User-Agent": "NovaInstall/2.0" },
-      signal: controller.signal,
-      cf: { cacheEverything: false },
-    });
-    if (response.ok) {
-      const data = await response.json();
-      if (data && data.kvOk && data.admin) return data;
+  let last = { httpStatus: 0, detail: "no_response" };
+  // Cloudflare edge propagation is not instantaneous. Retry independently
+  // from the browser connection so slow regions do not produce false failures.
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    try {
+      const response = await fetch(`${publicBase}/install/status?_t=${Date.now()}`, {
+        headers: { Accept: "application/json", "User-Agent": "NovaInstall/2.4.0" },
+        signal: controller.signal,
+        redirect: "manual",
+        cf: { cacheEverything: false },
+      });
+      last.httpStatus = response.status;
+      if (response.status >= 300 && response.status < 400) {
+        last.detail = "unexpected_redirect";
+      } else {
+        const text = await response.text();
+        let data = null;
+        try { data = text ? JSON.parse(text) : null; } catch {}
+        if (response.ok && data && data.kvOk && data.admin) return data;
+        last.detail = /1101|worker threw exception/i.test(text) ? "cloudflare_1101" : (data && data.error) || text.slice(0, 180) || "not_ready";
+      }
+    } catch (error) {
+      last.detail = error && error.name === "AbortError" ? "timeout" : "network_error";
+    } finally {
+      clearTimeout(timer);
     }
-  } catch {
-    /* edge not ready — user can still open login */
-  } finally {
-    clearTimeout(timer);
+    if (attempt < 7) await sleep(2500);
   }
-  return null;
+  return { _verificationFailed: true, httpStatus: last.httpStatus, detail: last.detail };
 }
 
 /* ------------------------------------------------------------- CF API proxy */
