@@ -195,7 +195,7 @@ if (path === "/health") {
       let jobConfig;
       try { jobConfig = await request.json(); } catch { return json({ ok: false, error: "bad_json" }, 400, cors.headers); }
       try {
-        const jobId = randomSlug(32);
+        const requestedJobId = request.headers.get("X-Nova-Job-Id") || "";\n        const jobId = /^[a-z0-9]{32}$/i.test(requestedJobId) ? requestedJobId : randomSlug(32);
         const stub = env.INSTALL_JOBS.get(env.INSTALL_JOBS.idFromName(jobId));
         const started = await stub.fetch("https://install-job/start", {
           method: "POST",
