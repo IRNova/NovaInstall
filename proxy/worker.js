@@ -543,7 +543,8 @@ async function runInstall(config, token, send) {
       loginUrl: publicBase + "/login",
       adminUrl: publicBase + "/admin",
       password: credentials.password,
-      verified,\n      verification: status && status._verificationFailed ? { httpStatus: status.httpStatus, detail: status.detail } : undefined,
+      verified,
+      verification: status && status._verificationFailed ? { httpStatus: status.httpStatus, detail: status.detail } : undefined,
     };
     await send({ type: "result", result: resultPayload });
   } catch (error) {
