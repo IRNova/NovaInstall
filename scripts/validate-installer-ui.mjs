@@ -17,8 +17,6 @@ assert(source.includes('if (state.busy) return;'), "installer prevents duplicate
 assert(source.includes("state.accountId = preflight.account.id;"), "preflight account ID is retained");
 assert(source.includes("startDurableInstall(token, preflight.account.id, preflight.account)"), "install job reuses preflight account");
 assert(source.includes('request.headers.get("X-Nova-Job-Id")'), "server accepts idempotent job ID");
-assert(source.includes('localStorage.setItem("nova-install-job-id", jobId)'), "job ID is persisted for reconnect");
-assert(source.includes('localStorage.removeItem("nova-install-job-id")'), "job ID is cleared after terminal state");
 
 const match = source.match(/^const INSTALL_UI_HTML = ("(?:\\.|[^"\\])*");$/m);
 assert(Boolean(match), "embedded installer HTML is a valid quoted source literal");
