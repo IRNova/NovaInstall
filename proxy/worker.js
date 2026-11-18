@@ -210,7 +210,7 @@ if (path === "/health") {
       }
     }
 
-    const jobMatch = path.match(/^\\/jobs\\/([a-z0-9]{32})$/i);
+    const jobMatch = path.match(/^\/jobs\/([a-z0-9]{32})$/i);
     if (jobMatch && request.method === "GET") {
       if (!env.INSTALL_JOBS) return json({ ok: false, error: "durable_jobs_not_configured" }, 503, cors.headers);
       const stub = env.INSTALL_JOBS.get(env.INSTALL_JOBS.idFromName(jobMatch[1]));
@@ -1169,7 +1169,7 @@ function corsHeaders(origin, env, requestUrl) {
 
   const headers = {
     "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "authorization, content-type, x-auth-email, x-auth-key, accept",
+    "Access-Control-Allow-Headers": "authorization, content-type, x-auth-email, x-auth-key, x-nova-job-id, accept",
     "Access-Control-Max-Age": "600",
     Vary: "Origin",
   };
