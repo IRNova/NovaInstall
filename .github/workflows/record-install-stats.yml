@@ -3,7 +3,6 @@ name: Record successful Nova installs
 on:
   repository_dispatch:
     types: [nova_install_success]
-  workflow_dispatch:
 
 permissions:
   contents: write
