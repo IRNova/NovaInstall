@@ -18,11 +18,15 @@
  *   GET  /health              -> { ok, version, capabilities }
  *   ALL  /api/<cloudflare>    -> https://api.cloudflare.com/client/v4/<cloudflare>
  *   GET  /probe?url=...       -> { ok, status, json } for an *.workers.dev URL
- *   POST /install             -> newline-delimited JSON progress stream
+ *   POST /preflight           -> read-only token/account/source checks
+ *   POST /jobs                -> start a durable background install
+ *   GET  /jobs/:id             -> reconnectable job status/progress/result
+ *   POST /install             -> legacy streaming installer (kept for compatibility)
  *   OPTIONS *                 -> CORS preflight
  *
- * Privacy: nothing is stored. The token is only forwarded to Cloudflare and is
- * never written to KV, logs or the response.
+ * Privacy: job tokens are held only temporarily in the job's SQLite-backed
+ * Durable Object storage so installation survives browser disconnects. They
+ * are never logged or copied to the user's Worker KV and are deleted on finish.
  */
 
 const CF_API = "https://api.cloudflare.com/client/v4";
@@ -142,7 +146,7 @@ if (path === "/health") {
           ok: true,
           service: "nova-install",
           version: VERSION,
-          capabilities: { install: true, bootstrap: true, api: true, ui: true },
+          capabilities: { install: true, bootstrap: true, api: true, ui: true, preflight: true, durableJobs: Boolean(env.INSTALL_JOBS) },
         },
         200,
         cors.headers,
