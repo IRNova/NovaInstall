@@ -7,3 +7,12 @@ workers_dev = true
 # Multiple origins can be separated with commas.
 [vars]
 ALLOWED_ORIGINS = "https://irnova.github.io"
+
+# Durable background jobs: installation continues if the browser disconnects.
+[[durable_objects.bindings]]
+name = "INSTALL_JOBS"
+class_name = "InstallJob"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["InstallJob"]
