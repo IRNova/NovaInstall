@@ -6,10 +6,12 @@ on:
     paths:
       - "proxy/**"
       - ".github/workflows/validate-proxy.yml"
+      - "scripts/validate-installer-ui.mjs"
   pull_request:
     paths:
       - "proxy/**"
       - ".github/workflows/validate-proxy.yml"
+      - "scripts/validate-installer-ui.mjs"
   workflow_dispatch:
 
 permissions:
@@ -30,6 +32,9 @@ jobs:
 
       - name: Check Worker JavaScript syntax
         run: node --check proxy/worker.js
+
+      - name: Validate embedded installer UI and UX safeguards
+        run: node scripts/validate-installer-ui.mjs
 
       - name: Validate Wrangler configuration and bundle
         working-directory: proxy
