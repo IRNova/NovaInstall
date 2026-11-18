@@ -28,7 +28,7 @@
 2. مقدار `CF_ACCOUNT_ID` را نیز در صورت نیاز تنظیم کن.
 3. از **Actions → Deploy Installer Proxy → Run workflow** انتشار را اجرا کن.
 
-Workflow از `proxy/wrangler.toml` استفاده می‌کند و Migration مربوط به `InstallJob` را همراه Deploy اعمال می‌کند. برای حساب‌های Workers Free از SQLite-backed Durable Object استفاده شده است؛ این backend در پلن Free پشتیبانی می‌شود. هر Job توکن Cloudflare کاربر را فقط تا پایان نصب به‌صورت موقت در فضای ذخیره‌سازی Durable Object نگه می‌دارد و پس از اتمام یا شکست حذف می‌کند.
+Workflow از `proxy/wrangler.toml` استفاده می‌کند و Migration مربوط به `InstallJob` را همراه Deploy اعمال می‌کند. برای حساب‌های Workers Free از SQLite-backed Durable Object استفاده شده است؛ این backend در پلن Free پشتیبانی می‌شود. هر Job توکن Cloudflare کاربر را فقط تا پایان نصب به‌صورت موقت در فضای ذخیره‌سازی Durable Object نگه می‌دارد و پس از اتمام یا شکست حذف می‌کند. نتیجهٔ نصب و رمز تحویلی حداکثر ۲۴ ساعت برای اتصال مجدد باقی می‌ماند و سپس خودکار پاک می‌شود.
 
 ### روند نصب
 
