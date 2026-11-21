@@ -1,109 +1,199 @@
+<div align="center">
+
+![NovaInstall banner](assets/banner.svg)
+
 # NovaInstall
 
-یک سیستم یکپارچه برای نصب و دیپلوی **NovaWorker** روی Cloudflare (بدون تغییر در ریپوی `IRNova/NovaWorker`).
+### A unified deployment toolkit for **NovaWorker** on Cloudflare
 
-این مخزن شامل چند روش نصب و ابزارهای جانبی است که همگی به‌سمت سورس رسمی [`IRNova/NovaWorker`](https://github.com/IRNova/NovaWorker) تنظیم شده‌اند و آمار نصب موفق (اختیاری) را می‌توان در هسته آماری داخل همین مخزن GitHub ذخیره کرد.
+**Web installer · CLI · Desktop OAuth wizard · Telegram bot**
 
-## معماری نصب وب (GitHub Pages + Proxy پردازش)
+[![GitHub Pages](https://img.shields.io/badge/Installer-GitHub%20Pages-6366f1?style=for-the-badge&logo=github)](https://irnova.github.io/NovaInstall/)
+[![Cloudflare Workers](https://img.shields.io/badge/Runtime-Cloudflare%20Workers-f38020?style=for-the-badge&logo=cloudflare)](https://workers.cloudflare.com/)
+[![License](https://img.shields.io/badge/License-MIT-10b981?style=for-the-badge)](LICENSE)
 
-- **UI نصب (GitHub Pages):** `index.html` + `assets/*` + `manifest.webmanifest` به‌صورت کامل روی GitHub Pages میزبانی می‌شوند.
-- **پردازش نصب (Cloudflare Worker):** `proxy/worker.js` فقط endpointهای پردازشی را ارائه می‌دهد (`/health`, `/preflight`, `/jobs`, `/install`, `/api/*`, `/probe`) و همچنین داشبورد آماری تفکیکی روی همان Worker در `/status` (و `/status.json`).
-- **اتصال UI به پردازش:** فقط با **یک خط** در [`assets/proxy-endpoint.js`](assets/proxy-endpoint.js):
-  - `window.NOVA_PROXY_ENDPOINT = "https://<your-proxy>.workers.dev";`
-- صفحهٔ نصب یک redirect/loader به Worker نیست؛ همه چیز از آدرس GitHub Pages بارگذاری می‌شود و فقط درخواست‌های پردازش به پروکسی ارسال می‌گردند.
+[**Launch Installer**](https://irnova.github.io/NovaInstall/) · [**Install Stats**](https://irnova.github.io/NovaInstall/stats.html) · [**Source: NovaWorker**](https://github.com/IRNova/NovaWorker)
 
-## اجزای اصلی
+</div>
 
-| مسیر | نقش | توضیح |
+---
+
+## ✨ Overview
+
+NovaInstall brings together several installation pathways for deploying the official **[IRNova/NovaWorker](https://github.com/IRNova/NovaWorker)** source to a user's Cloudflare account—without modifying the upstream repository.
+
+The installer UI is hosted on GitHub Pages. Processing and deployment operations are handled by a dedicated Cloudflare Worker proxy. Optional install-success telemetry can be recorded within this repository's GitHub-based stats core.
+
+> **Design principle:** the UI is hosted independently from the processing service. The page is not a redirect or loader for the Worker; it sends processing requests to the configured proxy endpoint.
+
+## 🧭 Architecture
+
+![NovaInstall architecture](assets/architecture.svg)
+
+### Request lifecycle
+
+![Installation flow](assets/install-flow.svg)
+
+1. **Configure** the proxy endpoint in `assets/proxy-endpoint.js`.
+2. **Preflight** checks are performed before installation.
+3. **Deploy** runs through the processing Worker, with persistent jobs in supported versions.
+4. **Verify** progress and status through supported endpoints and dashboards.
+
+## 🚀 Installation paths
+
+| Path | Location | Description |
 |---|---|---|
-| `index.html`, `assets/`, `manifest.webmanifest`, `sw.js` | UI نصب وب (GitHub Pages) | رابط کاربری کامل نصب روی GitHub. |
-| `proxy/` | سرویس پردازش نصب (Cloudflare Worker) | پیش‌بررسی، Job پایدار، نصب/آپلود/پیکربندی، پراکسی API محدود Cloudflare، آمار تفکیکی `/status`. |
-| `scripts/install.mjs` + `.github/workflows/nova-install.yml` | نصب CLI / GitHub Actions | نصب با توکن Cloudflare در Runner یا به‌صورت محلی. |
-| `desktop/` | نصب دسکتاپ (OAuth Wizard) | ویزارد محلی Python/OAuth برای دیپلوی NovaWorker. |
-| `bot/` | ربات تلگرام نصب | دیپلوی NovaWorker به حساب Cloudflare کاربر از طریق ربات (Cloudflare Worker + D1). |
-| `stats.json` + `stats.html` + `.github/workflows/record-install-stats.yml` | هسته آمار نصب موفق (داخل GitHub) | ثبت شمارنده نصب‌های موفق بدون وابستگی به سرویس خارجی. |
+| 🌐 **Web Installer** | `index.html`, `assets/` | Browser-based installer hosted on GitHub Pages. |
+| ⚙️ **CLI / GitHub Actions** | `scripts/install.mjs` | Deployment using Cloudflare credentials in a local environment or Actions runner. |
+| 🖥️ **Desktop Wizard** | `desktop/` | Local Python OAuth-based deployment wizard. |
+| 🤖 **Telegram Bot** | `bot/` | Deployment flow through a Telegram bot backed by Cloudflare Worker and D1. |
 
-## راه‌اندازی نصب وب
+## 🌐 Web installer setup
 
-1. **دیپلوی سرویس پردازش (`proxy/`)** روی Cloudflare Workers.
-   - در GitHub Actions: Secrets `CF_API_TOKEN` (و اختیاری `CF_ACCOUNT_ID`) را تنظیم و Workflow **Deploy Installer Proxy** را اجرا کنید.
-   - یا به‌صورت دستی: `cd proxy && npx wrangler@4 deploy`
-   - جزئیات: [`proxy/README.md`](proxy/README.md)
-2. **تنظیم اتصال UI (یک خط):** در [`assets/proxy-endpoint.js`](assets/proxy-endpoint.js) آدرس Worker پردازش را قرار دهید.
-3. **فعال‌سازی GitHub Pages** برای همین مخزن تا `index.html` به‌عنوان صفحهٔ اصلی سرو شود.
-4. صفحه نصب: **https://irnova.github.io/NovaInstall/**
-5. داشبورد آمار (در صورت فعال‌سازی): **https://irnova.github.io/NovaInstall/stats.html**
+### 1 — Deploy the processing proxy
 
-> نسخه‌های جدید پروکسی از Job پایدار (Durable Object + SQLite) استفاده می‌کنند؛ در صورت قطعی موقت مرورگر، نصب سمت سرور ادامه پیدا می‌کند و UI می‌تواند وضعیت را دوباره دریافت کند. آمار تجمیعی/تفکیکی نصب و خطاها (از جمله 1101) روی همان Worker در مسیر `/status` قابل مشاهده است.
+Deploy the `proxy/` directory to Cloudflare Workers.
 
-## هسته آمار نصب موفق (GitHub in-repo)
+**Using GitHub Actions**
+- Set `CF_API_TOKEN` as a repository secret.
+- Optionally set `CF_ACCOUNT_ID`.
+- Run the **Deploy Installer Proxy** workflow.
 
-جزئیات کامل در [`STATS-CORE.md`](STATS-CORE.md).
+**Manual deployment**
+```bash
+cd proxy
+npx wrangler@4 deploy
+```
 
-خلاصه:
-- داده‌ها در `stats.json` نگه‌داری می‌شوند.
-- Workflow `record-install-stats.yml` رویداد `repository_dispatch` (`nova_install_success`) را دریافت و شمارنده را به‌صورت سریالی/با dedupe (`event_id`) به‌روزرسانی می‌کند.
-- ارسال رویداد از نصب‌کننده‌ها **اختیاری** است و فقط در صورت تنظیم توکن آمار انجام می‌شود.
+See [`proxy/README.md`](proxy/README.md) for proxy-specific instructions.
 
-### فعال‌سازی ارسال آمار (پروکسی وب / بات / ویزارد دسکتاپ)
+### 2 — Configure the endpoint
 
-- `NOVA_GITHUB_STATS_TOKEN` (Secret): Fine-grained PAT با دسترسی **Contents: Read and write** روی ریپوی آمار
-- `NOVA_GITHUB_STATS_REPO` (اختیاری): مقدار `owner/repo` (پیش‌فرض: `IRNova/NovaInstall`)
+Edit [`assets/proxy-endpoint.js`](assets/proxy-endpoint.js) and set the Worker URL:
 
-هیچ توکن/رمز عبور/آدرس پنل/شناسه حساب Cloudflare در آمار ذخیره نمی‌شود.
+```js
+window.NOVA_PROXY_ENDPOINT = "https://<your-proxy>.workers.dev";
+```
 
-## نصب از طریق GitHub Actions (CLI Installer)
+This is the connection point between the GitHub Pages interface and the processing service.
 
-Workflow: `.github/workflows/nova-install.yml`  
-اسکریپت: `scripts/install.mjs`
+### 3 — Enable GitHub Pages
 
-می‌توانید از `workflow_dispatch` استفاده کنید و ورودی‌های لازم (توکن Cloudflare، نام Worker و ...) را بدهید. خروجی‌ها در artifact ذخیره می‌شوند.
+Configure GitHub Pages for this repository so that `index.html` is served as the site entry point.
 
-## نصب دسکتاپ (OAuth Wizard)
+### 4 — Open the installer
 
-پوشه: [`desktop/`](desktop/)
+**https://irnova.github.io/NovaInstall/**
 
-- سورس دیپلوی: `IRNova/NovaWorker` (`_worker.js`)
-- اجرای محلی: `python3 desktop/nova_wizard.py` (طبق پیش‌نیازهای همان پوشه)
-- ارسال آمار اختیاری با `NOVA_GITHUB_STATS_TOKEN` / `NOVA_GITHUB_STATS_REPO`
+## 🧱 Components
 
-## ربات تلگرام نصب
+| Component | Role | Responsibilities |
+|---|---|---|
+| `index.html` + `assets/` | Web UI | Installer interface, client assets, endpoint configuration |
+| `manifest.webmanifest` + `sw.js` | Web app support | Manifest and service-worker functionality |
+| `proxy/worker.js` | Processing service | Preflight, jobs, installation, restricted Cloudflare API proxy, status |
+| `scripts/install.mjs` | CLI engine | Script-based deployment |
+| `.github/workflows/nova-install.yml` | Automation | CLI workflow and artifact handling |
+| `desktop/` | Desktop installer | Python OAuth wizard |
+| `bot/` | Telegram deployment | Telegram-based installation flow |
+| `stats.json` + `stats.html` | Statistics | Repository-based installation metrics |
+| `.github/workflows/record-install-stats.yml` | Stats automation | Event handling and counter updates |
 
-پوشه: [`bot/`](bot/)  
-راهنمای پیکربندی و دیپلوی: [`bot/README.md`](bot/README.md)
+## 📊 Monitoring & statistics
 
-## اعتبارسنجی و شفافیت
+The optional dashboard is available at:
 
-- Workflow **Validate Installer Proxy and UI** بررسی سینتکس و ساختار (UI میزبان GitHub + پروکسی پردازشی) را انجام می‌دهد: `.github/workflows/validate-proxy.yml`
-- اسکریپت اعتبارسنجی: `scripts/validate-installer-ui.mjs`
-- سند شفافیت/بازتولیدپذیری بررسی‌ها: [`VERIFY.md`](VERIFY.md)
+**https://irnova.github.io/NovaInstall/stats.html**
 
-## ساختار مخزن
+The proxy exposes status endpoints including:
+
+- `/status` — status/dashboard response
+- `/status.json` — structured status data
+- `/health` — service health
+- `/preflight` — readiness checks
+- `/jobs` — installation job operations
+- `/install` — install operation
+- `/probe` — diagnostic probe
+- `/api/*` — supported, restricted API proxy routes
+
+> Endpoint behavior and availability depend on the deployed proxy version.
+
+## 📈 Repository-based install statistics
+
+Statistics can be recorded without relying on a legacy external statistics service.
+
+- Records are stored in `stats.json`.
+- The `record-install-stats.yml` workflow handles `repository_dispatch` events with the `nova_install_success` event type.
+- Events are serialized and deduplicated using `event_id`.
+- Sending statistics is **optional** and requires configuration.
+
+### Optional telemetry configuration
+
+| Variable / Secret | Purpose |
+|---|---|
+| `NOVA_GITHUB_STATS_TOKEN` | Fine-grained PAT with **Contents: Read and write** permission on the stats repository |
+| `NOVA_GITHUB_STATS_REPO` | Optional `owner/repo` target; defaults to `IRNova/NovaInstall` |
+
+**Telemetry privacy:** according to this project's documented design, install statistics do not store Cloudflare tokens, passwords, dashboard URLs, or Cloudflare account identifiers.
+
+## 🔐 Security & transparency
+
+- Keep Cloudflare credentials in GitHub Actions secrets or appropriate local secure storage.
+- Never commit tokens or secrets to source files.
+- Telemetry is optional.
+- The installer targets the official NovaWorker repository; NovaInstall is intended to orchestrate deployment, not alter the upstream project.
+- Validation and reproducibility notes are documented in [`VERIFY.md`](VERIFY.md).
+
+## 🧪 Validation
+
+The **Validate Installer Proxy and UI** workflow checks installer UI/proxy structure and syntax.
+
+- Workflow: `.github/workflows/validate-proxy.yml`
+- Validator: `scripts/validate-installer-ui.mjs`
+- Transparency notes: [`VERIFY.md`](VERIFY.md)
+
+## 🗂️ Repository layout
 
 ```text
-NovaInstall-main/
+NovaInstall/
 ├── index.html
-├── assets/                     # UI نصب، CSS/JS، آیکن‌ها، پیکربندی اتصال پروکسی
+├── assets/
 ├── manifest.webmanifest
 ├── sw.js
 ├── stats.html
 ├── stats.json
 ├── STATS-CORE.md
 ├── VERIFY.md
-├── proxy/                      # سرویس پردازش Cloudflare Worker
+├── proxy/
 ├── scripts/
 ├── desktop/
 ├── bot/
 └── .github/workflows/
 ```
 
-## نکات مهم
+## 🛠️ Stats core configuration
 
-- هدف نصب/دیپلوی همیشه `https://github.com/IRNova/NovaWorker` است؛ این مخزن نباید تغییری در `NovaWorker` ایجاد کند.
-- هسته آمار نصب درون همین مخزن GitHub است (بدون سرویس خارجی قدیمی).
-- اسکریپت‌ها و پروکسی باید با سورس NovaWorker سازگار بمانند (`_worker.js`, Worker module format).
-- آدرس سرویس پردازش فقط در `assets/proxy-endpoint.js` پیکربندی می‌شود؛ UI اصلی از GitHub Pages بارگذاری می‌گردد.
+More details: [`STATS-CORE.md`](STATS-CORE.md)
 
-## لایسنس
+The stats core uses the GitHub repository and workflow to record optional successful installation events. Configure the token and target repository only if you want installers to send events.
 
-MIT (مگر در فایل/پوشه‌ای لایسنس جداگانه ذکر شده باشد)
+## 🤝 Contributing & troubleshooting
+
+- Review the proxy setup notes in [`proxy/README.md`](proxy/README.md).
+- Review bot instructions in [`bot/README.md`](bot/README.md).
+- Check validation and reproducibility documentation in [`VERIFY.md`](VERIFY.md).
+- Inspect the deployed Worker status endpoint and workflow logs when diagnosing issues.
+
+## 📜 License
+
+**MIT**, unless a separate license is specified for an individual file or directory.
+
+---
+
+<div align="center">
+
+**NovaInstall** · Deployment orchestration for NovaWorker
+
+<sub>Built around the official source · Optional statistics · Multiple deployment routes</sub>
+
+</div>

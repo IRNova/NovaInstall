@@ -85,6 +85,28 @@
       serviceOk: "سرویس پردازش آماده است",
       serviceBad: "سرویس پردازش در دسترس نیست",
       serviceUnconfigured: "سرویس پردازش تنظیم نشده است",
+      panelPillUnknown: "نامشخص",
+      panelPillOk: "قابل دسترس",
+      panelPillSlow: "بررسی ناموفق",
+      panelModalSameName: "نام انتخاب‌شده",
+      panelModalTitle1101: "پنل موجود با مشکل شناسایی شد",
+      panelModalDesc1101: "روی این اکانت پنل Nova پیدا شد که احتمال مشکل Cloudflare 1101 دارد. نصب مجدد روی همان وضعیت ممکن است همان خطا را تکرار کند.",
+      panelModalTitleSame: "پنل موجود روی این نام پیدا شد",
+      panelModalDescSame: "یک پنل با همین نام Worker روی این اکانت وجود دارد. می‌توانید روی همان پنل نصب/بروزرسانی کنید یا یک پنل جدید با نام تصادفی بسازید.",
+      panelModalTitleOther: "پنل‌های Nova روی این اکانت شناسایی شد",
+      panelModalDescOther: "برای جلوگیری از تداخل یا خطای تکراری، یکی از گزینه‌های زیر را انتخاب کنید.",
+      panelModalNote1101: "<strong>پیشنهاد:</strong> برای جلوگیری از تکرار 1101، بهتر است از یک اکانت/توکن Cloudflare جدید استفاده کنید. اگر می‌دانید مشکل پنل برطرف شده، می‌توانید روی همین پنل نصب مجدد را امتحان کنید.",
+      panelModalNoteDefault: "می‌توانید روی پنل موجود نصب/بروزرسانی انجام دهید یا یک پنل جدید با نام تصادفی بسازید. اطلاعات نصب پس از اتمام نمایش داده می‌شود.",
+      panelModalBtnRepairRisk: "نصب مجدد روی همین پنل (ریسک)",
+      panelModalBtnReinstallSame: "نصب/بروزرسانی روی همین پنل",
+      panelModalBtnNewRisk: "ساخت پنل جدید با نام تصادفی (ریسک همین اکانت)",
+      panelModalBtnNew: "ساخت پنل جدید با نام تصادفی",
+      panelModalBtnUseDetected: "نصب روی پنل شناسایی‌شده",
+      panelModalBtnOtherAccount: "استفاده از اکانت/توکن دیگر",
+      panelModalBtnCancel: "انصراف",
+      jobRunningCloudflare: "نصب روی کلودفلر در حال اجراست؛ مرورگر می‌تواند با خیال راحت قطع و دوباره وصل شود",
+      pollReconnect: "ارتباط قطع شد · نصب سمت سرور ادامه دارد؛ در حال اتصال دوباره…",
+      pollReconnectHint: "اگر بدون VPN وصل نمی‌شوید، ممکن است مسیر workers.dev در شبکهٔ شما مختل باشد. VPN را امتحان کنید یا از دامنهٔ جایگزین پراکسی استفاده کنید.",
       serviceDegraded: "سرویس پردازش با محدودیت در دسترس است",
       serviceCounts: "موفق/ناموفق",
       copyDetails: "کپی جزئیات خطا",
@@ -179,6 +201,28 @@
       serviceOk: "Processing service is ready",
       serviceBad: "Processing service is unavailable",
       serviceUnconfigured: "Processing service is not configured",
+      panelPillUnknown: "Unknown",
+      panelPillOk: "Reachable",
+      panelPillSlow: "Check failed",
+      panelModalSameName: "Selected name",
+      panelModalTitle1101: "Existing panel issue detected",
+      panelModalDesc1101: "A Nova panel was found on this account with a possible Cloudflare 1101 issue. Reinstalling on the same state may repeat the same error.",
+      panelModalTitleSame: "Existing panel found for this name",
+      panelModalDescSame: "A Worker with this name already exists on this account. You can reinstall/update the same panel or create a new panel with a random name.",
+      panelModalTitleOther: "Nova panels detected on this account",
+      panelModalDescOther: "To avoid conflicts or repeated errors, choose one of the options below.",
+      panelModalNote1101: "<strong>Suggestion:</strong> To avoid repeating 1101, use a new Cloudflare account/token if possible. If you know the panel issue is fixed, you can try reinstalling on the same panel.",
+      panelModalNoteDefault: "You can reinstall/update an existing panel or create a new panel with a random name. Install details will be shown after completion.",
+      panelModalBtnRepairRisk: "Reinstall on same panel (risk)",
+      panelModalBtnReinstallSame: "Reinstall/update same panel",
+      panelModalBtnNewRisk: "Create new panel with random name (same account risk)",
+      panelModalBtnNew: "Create new panel with random name",
+      panelModalBtnUseDetected: "Install on detected panel",
+      panelModalBtnOtherAccount: "Use different account/token",
+      panelModalBtnCancel: "Cancel",
+      jobRunningCloudflare: "Installation is running on Cloudflare; browser can reconnect safely",
+      pollReconnect: "Connection interrupted · server job continues; reconnecting…",
+      pollReconnectHint: "If you cannot connect without VPN, workers.dev may be blocked on your network. Try a VPN or use an alternate proxy domain.",
       serviceDegraded: "Processing service is partially available",
       serviceCounts: "Success/Failed",
       copyDetails: "Copy error details",
@@ -273,6 +317,28 @@
       serviceOk: "Сервис обработки готов",
       serviceBad: "Сервис обработки недоступен",
       serviceUnconfigured: "Сервис обработки не настроен",
+      panelPillUnknown: "Неизвестно",
+      panelPillOk: "Доступна",
+      panelPillSlow: "Проверка не удалась",
+      panelModalSameName: "Выбранное имя",
+      panelModalTitle1101: "Обнаружена проблема с существующей панелью",
+      panelModalDesc1101: "На этом аккаунте найдена панель Nova с возможной проблемой Cloudflare 1101. Переустановка в том же состоянии может повторить ошибку.",
+      panelModalTitleSame: "Для этого имени найдена существующая панель",
+      panelModalDescSame: "Worker с этим именем уже существует на аккаунте. Можно переустановить/обновить эту панель или создать новую со случайным именем.",
+      panelModalTitleOther: "На аккаунте обнаружены панели Nova",
+      panelModalDescOther: "Чтобы избежать конфликтов или повторных ошибок, выберите один из вариантов ниже.",
+      panelModalNote1101: "<strong>Совет:</strong> Чтобы избежать повтора 1101, лучше использовать другой аккаунт/токен Cloudflare. Если проблема панели исправлена, можно попробовать переустановку на той же панели.",
+      panelModalNoteDefault: "Можно переустановить/обновить существующую панель или создать новую со случайным именем. Детали установки появятся после завершения.",
+      panelModalBtnRepairRisk: "Переустановить на той же панели (риск)",
+      panelModalBtnReinstallSame: "Переустановить/обновить ту же панель",
+      panelModalBtnNewRisk: "Создать новую панель со случайным именем (риск того же аккаунта)",
+      panelModalBtnNew: "Создать новую панель со случайным именем",
+      panelModalBtnUseDetected: "Установить на найденную панель",
+      panelModalBtnOtherAccount: "Использовать другой аккаунт/токен",
+      panelModalBtnCancel: "Отмена",
+      jobRunningCloudflare: "Установка выполняется в Cloudflare; браузер может безопасно переподключиться",
+      pollReconnect: "Соединение прервано · установка продолжается на сервере; переподключение…",
+      pollReconnectHint: "Если без VPN подключиться не удаётся, возможно, workers.dev блокируется в вашей сети. Попробуйте VPN или альтернативный домен прокси.",
       serviceDegraded: "Сервис обработки доступен частично",
       serviceCounts: "Успех/Ошибки",
       copyDetails: "Копировать детали ошибки",
@@ -469,9 +535,11 @@
     var reasons = stats && stats.reasons ? stats.reasons : {};
     var attempts = Number(inst.attempts || 0);
     var failed = Number(inst.failed || 0);
+    var success = Number(inst.success_verified || 0);
     var e1101 = Number(reasons.cloudflare_1101 || 0);
     var rate = attempts > 0 ? failed / attempts : 0;
-    var show = attempts >= 5 && (e1101 >= 1 || rate >= 0.25);
+    var healthyMajority = success > failed;
+    var show = attempts >= 5 && !healthyMajority && (e1101 >= 1 || rate >= 0.25);
     if (!show || dismissed) { banner.hidden = true; return; }
     var title = $('healthBannerTitle');
     var text = $('healthBannerText');
@@ -861,10 +929,10 @@
   }
 
   function panelPill(health) {
-    if (!health) return '<span class="pill warn">نامشخص</span>';
+    if (!health) return '<span class="pill warn">' + escapeHtml(t("panelPillUnknown")) + '</span>';
     if (health.cloudflare1101) return '<span class="pill bad">1101</span>';
-    if (health.ok) return '<span class="pill ok">قابل دسترس</span>';
-    if (health.reason === 'timeout' || health.reason === 'network_error') return '<span class="pill warn">بررسی ناموفق</span>';
+    if (health.ok) return '<span class="pill ok">' + escapeHtml(t("panelPillOk")) + '</span>';
+    if (health.reason === 'timeout' || health.reason === 'network_error') return '<span class="pill warn">' + escapeHtml(t("panelPillSlow")) + '</span>';
     return '<span class="pill warn">' + escapeHtml(String(health.reason || 'unknown')) + '</span>';
   }
 
@@ -886,21 +954,21 @@
       icon.textContent = has1101 ? '!' : (decision.action === 'install_new' ? '✓' : 'i');
 
       if (has1101) {
-        title.textContent = 'پنل موجود با مشکل شناسایی شد';
-        desc.textContent = 'روی این اکانت پنل Nova پیدا شد که احتمال مشکل Cloudflare 1101 دارد. نصب مجدد روی همان وضعیت ممکن است همان خطا را تکرار کند.';
+        title.textContent = t("panelModalTitle1101");
+        desc.textContent = t("panelModalDesc1101");
       } else if (decision.action === 'existing_same_name') {
-        title.textContent = 'پنل موجود روی این نام پیدا شد';
-        desc.textContent = 'یک پنل با همین نام Worker روی این اکانت وجود دارد. می‌توانید روی همان پنل نصب/بروزرسانی کنید یا یک پنل جدید با نام تصادفی بسازید.';
+        title.textContent = t("panelModalTitleSame");
+        desc.textContent = t("panelModalDescSame");
       } else {
-        title.textContent = 'پنل‌های Nova روی این اکانت شناسایی شد';
-        desc.textContent = 'برای جلوگیری از تداخل یا خطای تکراری، یکی از گزینه‌های زیر را انتخاب کنید.';
+        title.textContent = t("panelModalTitleOther");
+        desc.textContent = t("panelModalDescOther");
       }
 
       var items = panels.map(function (p) {
         var h = p.health || {};
         var url = p.url ? '<div class="panel-url">' + escapeHtml(p.url) + '</div>' : '';
         var flags = [];
-        if (p.isConfiguredName) flags.push('<span class="pill">نام انتخاب‌شده</span>');
+        if (p.isConfiguredName) flags.push('<span class="pill">' + escapeHtml(t("panelModalSameName")) + '</span>');
         if (p.hasKvBinding) flags.push('<span class="pill">KV</span>');
         flags.push(panelPill(h));
         return '<div class="panel-item">' +
@@ -911,9 +979,9 @@
 
       var note = '';
       if (has1101) {
-        note = '<div class="modal-note"><strong>پیشنهاد:</strong> برای جلوگیری از تکرار 1101، بهتر است از یک اکانت/توکن Cloudflare جدید استفاده کنید. اگر می‌دانید مشکل پنل برطرف شده، می‌توانید روی همین پنل نصب مجدد را امتحان کنید.</div>';
+        note = '<div class="modal-note">' + t("panelModalNote1101") + '</div>';
       } else if (panels.length) {
-        note = '<div class="modal-note">می‌توانید روی پنل موجود نصب/بروزرسانی انجام دهید یا یک پنل جدید با نام تصادفی بسازید. اطلاعات نصب پس از اتمام نمایش داده می‌شود.</div>';
+        note = '<div class="modal-note">' + escapeHtml(t("panelModalNoteDefault")) + '</div>';
       }
       body.innerHTML = items + note;
 
@@ -929,15 +997,15 @@
 
       var btns = [];
       if (same) {
-        btns.push({ label: has1101 ? 'نصب مجدد روی همین پنل (ریسک)' : 'نصب/بروزرسانی روی همین پنل', cls: has1101 ? 'btn danger' : 'btn primary', run: function () { close({ action: 'continue', workerName: same.workerName }); } });
+        btns.push({ label: has1101 ? t("panelModalBtnRepairRisk") : t("panelModalBtnReinstallSame"), cls: has1101 ? 'btn danger' : 'btn primary', run: function () { close({ action: 'continue', workerName: same.workerName }); } });
       }
-      btns.push({ label: has1101 ? 'ساخت پنل جدید با نام تصادفی (ریسک همین اکانت)' : 'ساخت پنل جدید با نام تصادفی', cls: has1101 ? 'btn' : (same ? 'btn' : 'btn primary'), run: function () { close({ action: 'continue', workerName: randomWorkerName() }); } });
+      btns.push({ label: has1101 ? t("panelModalBtnNewRisk") : t("panelModalBtnNew"), cls: has1101 ? 'btn' : (same ? 'btn' : 'btn primary'), run: function () { close({ action: 'continue', workerName: randomWorkerName() }); } });
       if (!same && panels.length) {
         // allow installing on first detected healthy panel
         var target = panels.find(function(p){ return p.health && p.health.ok && !p.health.cloudflare1101; }) || panels[0];
-        btns.push({ label: 'نصب روی پنل شناسایی‌شده: ' + target.workerName, cls: 'btn', run: function () { close({ action: 'continue', workerName: target.workerName }); } });
+        btns.push({ label: t("panelModalBtnUseDetected") + ': ' + target.workerName, cls: 'btn', run: function () { close({ action: 'continue', workerName: target.workerName }); } });
       }
-      btns.push({ label: has1101 ? 'استفاده از اکانت/توکن دیگر' : 'انصراف', cls: 'btn ghost', run: function () { close({ action: 'cancel' }); } });
+      btns.push({ label: has1101 ? t("panelModalBtnOtherAccount") : t("panelModalBtnCancel"), cls: 'btn ghost', run: function () { close({ action: 'cancel' }); } });
 
       actions.innerHTML = '';
       btns.forEach(function (b) {
@@ -1171,7 +1239,9 @@ async function startDurableInstall(token, accountId, account) {
 
 async function pollDurableJob(jobId) {
   var cursor = 0;
-  setStep("upload", "running", "installation is running on Cloudflare; browser can reconnect safely");
+  var failures = 0;
+  var hinted = false;
+  setStep("upload", "running", t("jobRunningCloudflare"));
   while (true) {
     var response;
     try {
@@ -1179,8 +1249,15 @@ async function pollDurableJob(jobId) {
         cache: "no-store", mode: "cors", credentials: "omit"
       }, 20000);
     } catch (error) {
-      termWrite("run", "connection interrupted · server job continues; reconnecting…");
-      await sleep(2000);
+      failures += 1;
+      termWrite("run", t("pollReconnect"));
+      if (failures >= 3 && !hinted) {
+        hinted = true;
+        termWrite("run", t("pollReconnectHint"));
+      }
+      var backoff = Math.min(10000, 2000 * Math.pow(1.6, Math.max(0, failures - 1)));
+      backoff = backoff + Math.floor(Math.random() * 400);
+      await sleep(backoff);
       continue;
     }
     if (response.status === 404) {
@@ -1194,9 +1271,17 @@ async function pollDurableJob(jobId) {
     var ptrace = (data && data.traceId) || response.headers.get("X-Request-Id") || "";
     if (ptrace) state.traceId = ptrace;
     if (!response.ok || !data || !data.ok) {
-      await sleep(2000);
+      failures += 1;
+      if (failures >= 3 && !hinted) {
+        hinted = true;
+        termWrite("run", t("pollReconnectHint"));
+      }
+      var backoffBad = Math.min(10000, 2000 * Math.pow(1.6, Math.max(0, failures - 1)));
+      await sleep(backoffBad);
       continue;
     }
+    failures = 0;
+    hinted = false;
     var events = Array.isArray(data.events) ? data.events : [];
     for (var i = 0; i < events.length; i++) {
       var event = events[i];
