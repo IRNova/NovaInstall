@@ -268,3 +268,49 @@ h1{font-weight:800}
   .service-status-meta{justify-content:flex-start}
   .action-row .btn{flex:1 1 160px}
 }
+
+
+/* Modal */
+.modal-backdrop{position:fixed;inset:0;z-index:120;display:grid;place-items:center;padding:18px;background:rgba(11,18,32,.42);backdrop-filter:blur(6px)}
+.modal-backdrop[hidden]{display:none!important}
+.modal{width:min(100%,720px);background:var(--card);border:1px solid var(--bd);border-radius:24px;box-shadow:0 1px 2px rgba(20,40,80,.04),0 30px 80px rgba(20,40,80,.22);padding:24px;position:relative;overflow:hidden}
+.modal::before{content:"";position:absolute;inset:0 0 auto 0;height:4px;background:var(--grad)}
+.modal-head{display:flex;gap:14px;align-items:flex-start;margin-bottom:14px}
+.modal-icon{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;font-weight:800;font-size:18px;background:var(--wn-soft);color:var(--wn);border:1px solid rgba(180,83,9,.18);flex:0 0 auto}
+.modal-icon.danger{background:var(--dg-soft);color:var(--dg);border-color:rgba(229,72,77,.18)}
+.modal-icon.ok{background:var(--ok-soft);color:var(--ok);border-color:rgba(22,163,74,.18)}
+.modal h2{margin:0;font-size:22px;line-height:1.35;letter-spacing:-.3px}
+.modal-body{display:grid;gap:12px;margin:14px 0 18px}
+.panel-item{border:1px solid var(--bd);background:var(--card2);border-radius:16px;padding:14px}
+.panel-item-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+.panel-name{font-weight:800;font-size:14px;direction:ltr;text-align:left}
+.panel-url{font-size:12px;color:var(--mu);direction:ltr;text-align:left;word-break:break-all}
+.panel-badges{display:flex;gap:6px;flex-wrap:wrap}
+.pill{display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;font-size:11px;font-weight:800;background:var(--card);border:1px solid var(--bd);color:var(--tx2)}
+.pill.ok{background:var(--ok-soft);border-color:rgba(22,163,74,.18);color:var(--ok)}
+.pill.bad{background:var(--dg-soft);border-color:rgba(229,72,77,.18);color:var(--dg)}
+.pill.warn{background:var(--wn-soft);border-color:rgba(180,83,9,.18);color:var(--wn)}
+.modal-note{font-size:13px;color:var(--tx2);background:var(--card2);border:1px solid var(--bd);border-radius:14px;padding:12px 14px;line-height:1.9}
+.modal-note strong{color:var(--tx)}
+.modal-actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+.modal-actions .btn{min-width:140px}
+.btn.danger{color:var(--dg);border-color:rgba(229,72,77,.22)}
+.btn.danger:hover{background:var(--dg-soft);border-color:rgba(229,72,77,.35);color:var(--dg)}
+@media (max-width:560px){.modal{padding:20px 16px;border-radius:20px}.modal-actions{flex-direction:column}.modal-actions .btn{width:100%}}
+
+/* Health banner */
+.health-banner{display:flex;gap:14px;align-items:flex-start;background:linear-gradient(180deg,#fff,var(--wn-soft));border:1px solid rgba(180,83,9,.22);border-radius:18px;padding:16px 18px;margin:0 0 16px;box-shadow:var(--shadow-sm)}
+.health-banner[hidden]{display:none!important}
+.health-banner-icon{width:36px;height:36px;border-radius:12px;display:grid;place-items:center;background:var(--wn-soft);color:var(--wn);font-weight:800;border:1px solid rgba(180,83,9,.18);flex:0 0 auto}
+.health-banner-body{flex:1;min-width:0}
+.health-banner-title{font-size:14px;font-weight:800;color:var(--tx);margin-bottom:2px}
+.health-banner-text{font-size:13px;color:var(--tx2);line-height:1.8}
+.health-banner-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.health-banner-actions .btn{padding:8px 12px;font-size:12px}
+/* Trust box */
+.trust-box{margin-top:14px;background:linear-gradient(180deg,#fff,var(--ac-soft));border:1px solid rgba(14,165,196,.18);border-radius:14px;padding:12px 14px}
+.trust-box-title{font-size:12px;font-weight:800;color:var(--ac);margin-bottom:4px}
+.trust-box-body{margin:0;font-size:12.5px;color:var(--tx2);line-height:1.9}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--tx2)}
+.btn.ghost:hover{background:var(--card2);border-color:var(--bd);color:var(--tx)}
+@media (max-width:760px){.health-banner{flex-direction:column}.health-banner-actions{width:100%}.health-banner-actions .btn{flex:1}}

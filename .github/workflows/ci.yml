@@ -9,38 +9,45 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Syntax checks (proxy/UI/bot/scripts)
         shell: bash
         run: |
           set -euo pipefail
-          node --check NovaInstall-main/proxy/worker.js
-          node --check NovaInstall-main/scripts/validate-installer-ui.mjs
-          node --check NovaInstall-main/assets/nova-install.js
-          node --check NovaInstall-main/scripts/install.mjs || true
-          for f in NovaInstall-main/bot/src/*.js; do [ -f "$f" ] && node --check "$f"; done
-          node NovaInstall-main/scripts/validate-installer-ui.mjs
+          node --check proxy/worker.js
+          node --check assets/nova-install.js
+          node --check scripts/validate-installer-ui.mjs
+          node --check scripts/install.mjs
+          for f in bot/src/*.js; do [ -f "$f" ] && node --check "$f"; done
+          node scripts/validate-installer-ui.mjs
 
-      - name: Validate stats JSON
+      - name: Validate config and data files
         shell: bash
         run: |
           set -euo pipefail
-          node -e "JSON.parse(require('fs').readFileSync('NovaInstall-main/stats.json','utf8')); console.log('stats.json OK')"
+          node -e "JSON.parse(require('fs').readFileSync('stats.json','utf8')); console.log('stats.json OK')"
+          node -e "const s=require('fs').readFileSync('assets/proxy-endpoint.js','utf8'); if(!/NOVA_PROXY_ENDPOINT\s*=/.test(s)) throw new Error('proxy-endpoint.js missing NOVA_PROXY_ENDPOINT'); console.log('proxy-endpoint.js OK')"
+          node -e "const h=require('fs').readFileSync('index.html','utf8'); for (const k of ['id=\"installBtn\"','id=\"token\"','assets/nova-install.js']) { if(!h.includes(k)) throw new Error('index.html missing '+k); } console.log('index.html OK')"
 
       - name: Summary
         if: always()
         shell: bash
         run: |
           echo "### NovaInstall CI" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Validation completed for proxy, UI, bot, and stats data." >> "$GITHUB_STEP_SUMMARY"
+          echo "- Syntax and validation checks completed for proxy, UI, bot, scripts, and data files." >> "$GITHUB_STEP_SUMMARY"
