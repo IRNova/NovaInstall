@@ -960,6 +960,12 @@ async function startDurableInstall(token, accountId, account) {
         started = true;
       } else if (response.status === 409 && data && data.error === "job_already_started") {
         started = true;
+      } else if (response.status === 503 && data && data.error === "durable_jobs_not_configured") {
+        try { localStorage.removeItem("nova-install-job-id"); } catch (e) {}
+        termWrite("run", "durable jobs unavailable · falling back to streaming install");
+        state.token = "";
+        $("token").value = "";
+        return streamInstall(token, accountId);
       } else {
         var jerr = new Error((data && data.message) || (data && data.error) || ("Job HTTP " + response.status));
         jerr.step = (data && data.step) || "upload";
