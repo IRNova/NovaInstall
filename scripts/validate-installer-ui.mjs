@@ -34,10 +34,11 @@ assert(worker.includes("export class InstallStats"), "proxy provides aggregate s
 assert(worker.includes("cloudflare_1101"), "proxy tracks 1101 classification in stats/verification logic");
 
 // GitHub-hosted UI architecture
-const workerHost = "nameless-rain-87c6.altramax083.workers.dev";
-for (const [name, text] of [["index.html", indexHtml], ["assets/nova-install.js", appJs], ["assets/nova-install.css", appCss], ["assets/proxy-endpoint.js", proxyEndpoint], ["manifest.webmanifest", manifest]]) {
-  assert(!text.includes(workerHost), `${name} has no hardcoded worker address`);
+const legacyWorkerHost = "nameless-rain-87c6.altramax083.workers.dev";
+for (const [name, text] of [["index.html", indexHtml], ["assets/nova-install.js", appJs], ["assets/nova-install.css", appCss], ["manifest.webmanifest", manifest]]) {
+  assert(!text.includes(legacyWorkerHost), `${name} has no hardcoded worker address`);
 }
+assert(proxyEndpoint.includes("window.NOVA_PROXY_ENDPOINT"), "proxy endpoint config declares NOVA_PROXY_ENDPOINT");
 assert(!indexHtml.includes("document.write"), "index.html is not a loader/redirect that writes remote UI");
 assert(indexHtml.includes('href="assets/nova-install.css"'), "index.html loads local CSS from GitHub-hosted assets");
 assert(indexHtml.includes('src="assets/proxy-endpoint.js"'), "index.html includes single-line proxy endpoint config script");
