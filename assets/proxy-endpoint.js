@@ -1,0 +1,1 @@
+window.NOVA_PROXY_ENDPOINT = "";

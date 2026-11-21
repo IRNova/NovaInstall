@@ -1,0 +1,55 @@
+name: Bug report / گزارش مشکل
+description: Report an installation, proxy, UI, bot, or desktop issue
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        لطفاً اطلاعات زیر را برای بررسی سریع‌تر مشکل نصب/سرویس ارائه کنید. از ارسال توکن، رمز، یا اطلاعات حساس خودداری کنید.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component / بخش
+      options:
+        - Web Installer UI (GitHub Pages)
+        - Processing Proxy (Cloudflare Worker)
+        - GitHub Actions / CLI Install
+        - Telegram Bot
+        - Desktop Wizard (Windows)
+        - Stats / Docs
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened? / چه اتفاقی افتاد؟
+      description: Explain the issue and expected behavior.
+      placeholder: Describe the problem...
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce / مراحل بازتولید
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+  - type: textarea
+    id: error
+    attributes:
+      label: Error details / جزئیات خطا
+      description: Include step/reason/hint, HTTP status, or 1101 details if shown. Do not include tokens/passwords.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Version / نسخه
+      placeholder: Proxy version, UI commit/tag, desktop version, etc.
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context / اطلاعات تکمیلی
+      description: Browser/OS, network conditions, screenshots (without secrets), etc.

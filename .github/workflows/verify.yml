@@ -1,0 +1,52 @@
+name: Verify NovaInstall
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Check JavaScript syntax
+        run: |
+          node --check proxy/worker.js
+          node --check scripts/install.mjs
+          node --check scripts/validate-installer-ui.mjs
+
+      - name: Validate GitHub-hosted UI and processing proxy
+        run: node scripts/validate-installer-ui.mjs
+
+      - name: Validate Wrangler configuration and bundle (dry-run)
+        working-directory: proxy
+        run: npx --yes wrangler@4 deploy --dry-run --outdir /tmp/nova-install-dry-run
+
+      - name: Publish verification summary
+        run: |
+          {
+            echo "## NovaInstall verification"
+            echo
+            echo "- Proxy syntax: OK"
+            echo "- Installer scripts syntax: OK"
+            echo "- UI/proxy architecture validation: OK"
+            echo "- Wrangler dry-run bundle: OK"
+            echo
+            echo "### Key file hashes (SHA-256)"
+            echo '```'
+            sha256sum proxy/worker.js index.html assets/nova-install.js assets/nova-install.css assets/proxy-endpoint.js scripts/install.mjs scripts/validate-installer-ui.mjs
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

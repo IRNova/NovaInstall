@@ -1,0 +1,127 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Tag/release name (used only for manual runs, e.g. v2026.05.01)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build-desktop-windows:
+    name: Build desktop (Windows EXE)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build dependencies
+        shell: pwsh
+        working-directory: NovaInstall-main/desktop
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller pillow
+
+      - name: Verify embedded UI is in sync
+        shell: pwsh
+        working-directory: NovaInstall-main/desktop
+        run: |
+          python scripts/embed_ui.py --check
+
+      - name: Build EXE (PyInstaller)
+        shell: pwsh
+        working-directory: NovaInstall-main/desktop
+        run: |
+          pyinstaller --onefile --name NovaWizard --add-data "static;static" --icon app.ico nova_wizard.py
+
+      - name: Package desktop artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist/release | Out-Null
+          Compress-Archive -Path NovaInstall-main/desktop/dist/NovaWizard.exe -DestinationPath dist/release/NovaWizard-windows-x64.zip -Force
+
+      - name: Upload desktop artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-windows
+          path: dist/release/NovaWizard-windows-x64.zip
+          if-no-files-found: error
+
+  package-bundles:
+    name: Package bot/proxy/installer bundles
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create bundle archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release
+          tar -czf dist/release/nova-install-web-ui.tar.gz -C NovaInstall-main index.html assets manifest.webmanifest sw.js stats.html stats.json STATS-CORE.md README.md
+          tar -czf dist/release/nova-install-proxy.tar.gz -C NovaInstall-main proxy
+          tar -czf dist/release/nova-install-bot.tar.gz -C NovaInstall-main bot
+          tar -czf dist/release/nova-install-desktop-source.tar.gz -C NovaInstall-main desktop
+
+      - name: Upload bundle artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundles
+          path: dist/release/*.tar.gz
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [build-desktop-windows, package-bundles]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/release
+          merge-multiple: true
+
+      - name: Generate checksums
+        shell: bash
+        working-directory: dist/release
+        run: |
+          set -euo pipefail
+          sha256sum * > SHA256SUMS.txt
+          ls -la
+          cat SHA256SUMS.txt
+
+      - name: Determine release tag
+        id: rel
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.tag_name }}" ]; then
+            echo "tag=${{ inputs.tag_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create/Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.rel.outputs.tag }}
+          name: NovaInstall ${{ steps.rel.outputs.tag }}
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(steps.rel.outputs.tag, '-') }}
+          files: |
+            dist/release/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

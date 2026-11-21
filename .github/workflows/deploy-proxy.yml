@@ -1,14 +1,22 @@
 name: Deploy Installer Proxy
 
-# پروکسی صفحهٔ نصب را روی Cloudflare Workers منتشر می‌کند.
+# سرویس پردازش نصب (Cloudflare Worker) را منتشر می‌کند.
+# صفحهٔ اصلی نصب روی GitHub Pages میزبانی می‌شود و فقط برای پردازش به این پروکسی متصل می‌گردد.
 # پیش‌نیاز: در Settings → Secrets and variables → Actions این را بساز:
 #   CF_API_TOKEN   (Account → Workers Scripts: Edit)
 #   CF_ACCOUNT_ID  (اختیاری ولی پیشنهادی)
+#
+# پس از دیپلوی، آدرس Worker را در assets/proxy-endpoint.js (یک خط) قرار دهید.
 #
 # اگر پروکسی را دستی در داشبورد Cloudflare ساخته‌ای، نیازی به اجرای این workflow نیست.
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "proxy/**"
+      - ".github/workflows/deploy-proxy.yml"
 
 permissions:
   contents: read
@@ -44,4 +52,4 @@ jobs:
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
           workingDirectory: proxy
           command: deploy
-          wranglerVersion: "3.90.0"
+          wranglerVersion: "4"

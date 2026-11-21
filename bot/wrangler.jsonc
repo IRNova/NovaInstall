@@ -1,6 +1,42 @@
 {
+  // Nova Install Bot (NovaInstall-main/bot)
+  // Telegram bot that helps users deploy NovaWorker to their own Cloudflare account.
+  // Deploy target source is fixed to IRNova/NovaWorker (this repo/config must not modify NovaWorker).
+  //
+  // Secrets (set with `wrangler secret put`, never committed):
+  //   BOT_TOKEN                    - Telegram bot token from @BotFather
+  //   WEBHOOK_SECRET               - random string for Telegram webhook verification
+  //   INSTALLATION_SIGNING_SECRET  - >= 32 random chars; signs hidden install identity
+  // Optional secrets/vars for in-repo GitHub stats core (NovaInstall-main):
+  //   NOVA_GITHUB_STATS_TOKEN      - (secret) GitHub PAT with Contents: Read and write on stats repo
+  //   NOVA_GITHUB_STATS_REPO       - (var, optional) owner/repo, default: IRNova/NovaInstall
   "name": "nova-install-bot",
   "main": "src/index.js",
-  "compatibility_date": "2025-11-04",
-  "workers_dev": true
+  "compatibility_date": "2026-07-30",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": true,
+  "observability": { "enabled": true },
+  // Nightly community-group cleanup. 20:30 UTC = 00:00 in Iran (a fixed UTC+3:30,
+  // no daylight saving since 2022).
+  "triggers": { "crons": ["30 20 * * *"] },
+  "vars": {
+    // Public config - safe to commit. The bot installs NovaWorker (_worker.js) from IRNova/NovaWorker.
+    // Both URLs must answer 200 directly (download uses redirect: "manual").
+    "WORKER_JS_URL": "https://raw.githubusercontent.com/IRNova/NovaWorker/main/_worker.js",
+    "WORKER_JS_FALLBACK_URL": "https://cdn.jsdelivr.net/gh/IRNova/NovaWorker@main/_worker.js",
+    // Set this to your deployed bot URL if you need absolute links/webhook helpers in the app.
+    "PUBLIC_URL": "",
+    // Optional: override stats repo for GitHub in-repo stats core (defaults to IRNova/NovaInstall in code).
+    "NOVA_GITHUB_STATS_REPO": "IRNova/NovaInstall"
+  },
+  // Workers AI: free auto-answer fallback (10,000 neurons/day included).
+  "ai": { "binding": "AI" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "nova-install-bot-db",
+      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+    }
+  ]
 }

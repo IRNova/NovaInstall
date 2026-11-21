@@ -1,0 +1,26 @@
+{
+  "name": "Nova Worker Install",
+  "short_name": "Nova Install",
+  "description": "نصب آسان Nova Worker روی Cloudflare",
+  "start_url": "https://irnova.github.io/NovaInstall/",
+  "scope": "https://irnova.github.io/NovaInstall/",
+  "display": "standalone",
+  "background_color": "#f4f6fb",
+  "theme_color": "#0ea5c4",
+  "dir": "rtl",
+  "lang": "fa",
+  "icons": [
+    {
+      "src": "assets/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "assets/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+name: Validate Installer Proxy and UI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "proxy/**"
+      - "index.html"
+      - "assets/**"
+      - "manifest.webmanifest"
+      - "sw.js"
+      - ".github/workflows/validate-proxy.yml"
+      - "scripts/validate-installer-ui.mjs"
+  pull_request:
+    paths:
+      - "proxy/**"
+      - "index.html"
+      - "assets/**"
+      - "manifest.webmanifest"
+      - "sw.js"
+      - ".github/workflows/validate-proxy.yml"
+      - "scripts/validate-installer-ui.mjs"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Check Worker and installer script syntax
+        run: |
+          node --check proxy/worker.js
+          node --check scripts/install.mjs
+
+      - name: Validate GitHub-hosted UI and processing proxy safeguards
+        run: node scripts/validate-installer-ui.mjs
+
+      - name: Validate Wrangler configuration and bundle
+        working-directory: proxy
+        run: npx --yes wrangler@4 deploy --dry-run --outdir /tmp/nova-install-dry-run
