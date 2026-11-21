@@ -5,13 +5,9 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
-  - package-ecosystem: "github-actions"
-    directory: "/NovaInstall-main"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
+
   - package-ecosystem: "npm"
-    directory: "/NovaInstall-main/bot"
+    directory: "/bot"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5

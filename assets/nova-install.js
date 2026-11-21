@@ -72,7 +72,7 @@
       recovering: "بازیابی نصب از کلودفلر…",
       recoverFailed: "بازیابی نصب ناموفق بود؛ صفحه را نوسازی کن و دوباره تلاش کن.",
       installBtn: "شروع نصب",
-      securityNote: "توکن فقط در حافظهٔ همین مرورگر می‌ماند و برای انجام نصب از طریق پروکسی رسمی NovaInstall به api.cloudflare.com فرستاده می‌شود؛ ذخیره نمی‌شود و به کسی نمایش داده نمی‌شود. بعد از نصب می‌توانی توکن را Revoke کنی.",
+      securityNote: "توکن فقط برای فراخوانی API کلودفلر از طریق پراکسی استفاده می‌شود؛ در آمار/گزارش ذخیره نمی‌شود و بعد از شروع نصب از فیلد پاک می‌شود. پس از نصب می‌توانید آن را Revoke کنید.",
       progressTitle: "فرایند نصب", preparing: "در حال آماده‌سازی…",
       resultTitle: "نصب کامل شد", loginLabel: "آدرس ورود", passLabel: "رمز مدیریت",
       passHint: "این رمز را در جای امن نگه دار؛ تنها راه ورود به پنل است.",
@@ -89,12 +89,19 @@
       serviceCounts: "موفق/ناموفق",
       copyDetails: "کپی جزئیات خطا",
       copyLog: "کپی گزارش نصب",
+      copyReport: "کپی گزارش کامل (JSON)",
+      copiedReport: "گزارش کامل کپی شد",
       copyResult: "کپی اطلاعات نصب",
       shareResult: "اشتراک‌گذاری",
       copiedDetails: "جزئیات کپی شد",
       noShare: "اشتراک‌گذاری در این مرورگر پشتیبانی نمی‌شود.",
       statsLink: "آمار",
       helpLink: "راهنما / گزارش مشکل",
+      healthBannerTitle: "هشدار وضعیت سرویس",
+      healthBannerBody: "در حال حاضر بخشی از نصب‌ها با خطا مواجه هستند (نرخ خطا/1101 بالا). قبل از نصب، وضعیت سرویس را بررسی کنید.",
+      healthBannerLink: "مشاهده وضعیت",
+      tokenTrustTitle: "شفافیت امنیت توکن",
+      tokenTrustBody: "توکن فقط برای فراخوانی API کلودفلر از طریق پراکسی استفاده می‌شود؛ در آمار/گزارش ذخیره نمی‌شود و بعد از شروع نصب از فیلد پاک می‌شود. پس از نصب می‌توانید آن را Revoke کنید.",
       traceLabel: "شناسه پیگیری",
       reasonLabel: "دلیل",
       stepLabel: "مرحله",
@@ -176,12 +183,19 @@
       serviceCounts: "Success/Failed",
       copyDetails: "Copy error details",
       copyLog: "Copy install log",
+      copyReport: "Copy full report (JSON)",
+      copiedReport: "Full report copied",
       copyResult: "Copy install info",
       shareResult: "Share",
       copiedDetails: "Details copied",
       noShare: "Sharing is not supported in this browser.",
       statsLink: "Stats",
       helpLink: "Help / Report",
+      healthBannerTitle: "Service status warning",
+      healthBannerBody: "Some installs are currently failing (elevated failure/1101 rate). Check service status before installing.",
+      healthBannerLink: "View status",
+      tokenTrustTitle: "Token security transparency",
+      tokenTrustBody: "Your token is used only to call Cloudflare APIs through the proxy; it is not stored in stats/reports and is cleared from the field after install starts. You can revoke it after installation.",
       traceLabel: "Trace ID",
       reasonLabel: "Reason",
       stepLabel: "Step",
@@ -263,12 +277,19 @@
       serviceCounts: "Успех/Ошибки",
       copyDetails: "Копировать детали ошибки",
       copyLog: "Копировать журнал",
+      copyReport: "Копировать полный отчёт (JSON)",
+      copiedReport: "Полный отчёт скопирован",
       copyResult: "Копировать данные установки",
       shareResult: "Поделиться",
       copiedDetails: "Детали скопированы",
       noShare: "Поделиться в этом браузере нельзя.",
       statsLink: "Статистика",
       helpLink: "Помощь / Отчёт",
+      healthBannerTitle: "Предупреждение о статусе сервиса",
+      healthBannerBody: "Сейчас часть установок завершается ошибкой (повышенный уровень ошибок/1101). Проверьте статус сервиса перед установкой.",
+      healthBannerLink: "Статус сервиса",
+      tokenTrustTitle: "Прозрачность безопасности токена",
+      tokenTrustBody: "Токен используется только для вызовов Cloudflare API через прокси; он не сохраняется в статистике/отчётах и очищается после начала установки. После установки его можно отозвать.",
       traceLabel: "ID трассировки",
       reasonLabel: "Причина",
       stepLabel: "Шаг",
@@ -304,7 +325,7 @@
   var lang = "fa";
   try { var savedLang = localStorage.getItem("nova-install-lang"); if (savedLang && I18N[savedLang]) lang = savedLang; } catch (e) {}
 
-  var state = { busy: false, steps: {}, token: "", accountId: null, result: null, proxyVersion: "", startedAt: 0, lastError: null, service: null, traceId: "" };
+  var state = { busy: false, steps: {}, token: "", accountId: null, result: null, proxyVersion: "", startedAt: 0, lastError: null, service: null, traceId: "", lastPreflight: null, lastStatusPayload: null };
 
   function t(key) {
     var parts = String(key).split(".");
@@ -438,6 +459,29 @@
     }
   }
 
+  function updateHealthBanner(statusPayload) {
+    var banner = $('healthBanner');
+    if (!banner) return;
+    var dismissed = false;
+    try { dismissed = sessionStorage.getItem('nova-health-banner-dismissed') === '1'; } catch (e) {}
+    var stats = statusPayload && statusPayload.stats;
+    var inst = stats && stats.install ? stats.install : {};
+    var reasons = stats && stats.reasons ? stats.reasons : {};
+    var attempts = Number(inst.attempts || 0);
+    var failed = Number(inst.failed || 0);
+    var e1101 = Number(reasons.cloudflare_1101 || 0);
+    var rate = attempts > 0 ? failed / attempts : 0;
+    var show = attempts >= 5 && (e1101 >= 1 || rate >= 0.25);
+    if (!show || dismissed) { banner.hidden = true; return; }
+    var title = $('healthBannerTitle');
+    var text = $('healthBannerText');
+    var link = $('healthBannerLink');
+    if (title) title.textContent = t('healthBannerTitle');
+    if (text) text.textContent = t('healthBannerBody') + ' (1101: ' + e1101.toLocaleString('fa-IR') + ' · ' + t('serviceCounts') + ': ' + Number(inst.success_verified||0).toLocaleString('fa-IR') + '/' + failed.toLocaleString('fa-IR') + ')';
+    if (link) { link.textContent = t('healthBannerLink'); link.href = PROXY_URL ? (PROXY_URL.replace(/\/+$/, '') + '/status') : link.href; }
+    banner.hidden = false;
+  }
+
   function refreshServiceStatus() {
     if (!PROXY_URL) { renderServiceStatus(null); return; }
     var info = { ok: false, degraded: false, version: "", status: null, url: PROXY_URL };
@@ -457,7 +501,7 @@
       })
       .then(function (st) { info.status = st; })
       .catch(function () { info.ok = false; })
-      .then(function () { renderServiceStatus(info); return info; });
+      .then(function () { state.lastStatusPayload = info.status; renderServiceStatus(info); updateHealthBanner(info.status); return info; });
   }
 
   function detectProxy() {
@@ -801,6 +845,116 @@
 
   /* ---------------------------------------------------------------- install */
 
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+    });
+  }
+
+  function randomWorkerName() {
+    var chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    var out = 'w';
+    var bytes = new Uint8Array(10);
+    try { crypto.getRandomValues(bytes); } catch (e) { for (var i=0;i<bytes.length;i++) bytes[i]=Math.floor(Math.random()*256); }
+    for (var i = 0; i < 10; i++) out += chars[bytes[i] % chars.length];
+    return out;
+  }
+
+  function panelPill(health) {
+    if (!health) return '<span class="pill warn">نامشخص</span>';
+    if (health.cloudflare1101) return '<span class="pill bad">1101</span>';
+    if (health.ok) return '<span class="pill ok">قابل دسترس</span>';
+    if (health.reason === 'timeout' || health.reason === 'network_error') return '<span class="pill warn">بررسی ناموفق</span>';
+    return '<span class="pill warn">' + escapeHtml(String(health.reason || 'unknown')) + '</span>';
+  }
+
+  function showPanelDecision(preflight) {
+    return new Promise(function (resolve) {
+      var modal = $('panelModal');
+      var body = $('panelModalBody');
+      var actions = $('panelModalActions');
+      var icon = $('panelModalIcon');
+      var title = $('panelModalTitle');
+      var desc = $('panelModalDesc');
+      var panels = Array.isArray(preflight.existingPanels) ? preflight.existingPanels : [];
+      var decision = preflight.panelDecision || {};
+      var same = panels.find(function (p) { return p && p.isConfiguredName; });
+      var broken = panels.filter(function (p) { return p && p.health && p.health.cloudflare1101; });
+      var has1101 = broken.length > 0;
+
+      icon.className = 'modal-icon' + (has1101 ? ' danger' : (decision.action === 'install_new' ? ' ok' : ''));
+      icon.textContent = has1101 ? '!' : (decision.action === 'install_new' ? '✓' : 'i');
+
+      if (has1101) {
+        title.textContent = 'پنل موجود با مشکل شناسایی شد';
+        desc.textContent = 'روی این اکانت پنل Nova پیدا شد که احتمال مشکل Cloudflare 1101 دارد. نصب مجدد روی همان وضعیت ممکن است همان خطا را تکرار کند.';
+      } else if (decision.action === 'existing_same_name') {
+        title.textContent = 'پنل موجود روی این نام پیدا شد';
+        desc.textContent = 'یک پنل با همین نام Worker روی این اکانت وجود دارد. می‌توانید روی همان پنل نصب/بروزرسانی کنید یا یک پنل جدید با نام تصادفی بسازید.';
+      } else {
+        title.textContent = 'پنل‌های Nova روی این اکانت شناسایی شد';
+        desc.textContent = 'برای جلوگیری از تداخل یا خطای تکراری، یکی از گزینه‌های زیر را انتخاب کنید.';
+      }
+
+      var items = panels.map(function (p) {
+        var h = p.health || {};
+        var url = p.url ? '<div class="panel-url">' + escapeHtml(p.url) + '</div>' : '';
+        var flags = [];
+        if (p.isConfiguredName) flags.push('<span class="pill">نام انتخاب‌شده</span>');
+        if (p.hasKvBinding) flags.push('<span class="pill">KV</span>');
+        flags.push(panelPill(h));
+        return '<div class="panel-item">' +
+          '<div class="panel-item-head"><div class="panel-name">' + escapeHtml(p.workerName || '-') + '</div><div class="panel-badges">' + flags.join('') + '</div></div>' +
+          url +
+        '</div>';
+      }).join('');
+
+      var note = '';
+      if (has1101) {
+        note = '<div class="modal-note"><strong>پیشنهاد:</strong> برای جلوگیری از تکرار 1101، بهتر است از یک اکانت/توکن Cloudflare جدید استفاده کنید. اگر می‌دانید مشکل پنل برطرف شده، می‌توانید روی همین پنل نصب مجدد را امتحان کنید.</div>';
+      } else if (panels.length) {
+        note = '<div class="modal-note">می‌توانید روی پنل موجود نصب/بروزرسانی انجام دهید یا یک پنل جدید با نام تصادفی بسازید. اطلاعات نصب پس از اتمام نمایش داده می‌شود.</div>';
+      }
+      body.innerHTML = items + note;
+
+      function close(result) {
+        modal.hidden = true;
+        modal.onclick = null;
+        document.removeEventListener('keydown', onKey);
+        resolve(result);
+      }
+      function onKey(e) { if (e.key === 'Escape') close({ action: 'cancel' }); }
+      document.addEventListener('keydown', onKey);
+      modal.onclick = function (e) { if (e.target === modal) close({ action: 'cancel' }); };
+
+      var btns = [];
+      if (same) {
+        btns.push({ label: has1101 ? 'نصب مجدد روی همین پنل (ریسک)' : 'نصب/بروزرسانی روی همین پنل', cls: has1101 ? 'btn danger' : 'btn primary', run: function () { close({ action: 'continue', workerName: same.workerName }); } });
+      }
+      btns.push({ label: has1101 ? 'ساخت پنل جدید با نام تصادفی (ریسک همین اکانت)' : 'ساخت پنل جدید با نام تصادفی', cls: has1101 ? 'btn' : (same ? 'btn' : 'btn primary'), run: function () { close({ action: 'continue', workerName: randomWorkerName() }); } });
+      if (!same && panels.length) {
+        // allow installing on first detected healthy panel
+        var target = panels.find(function(p){ return p.health && p.health.ok && !p.health.cloudflare1101; }) || panels[0];
+        btns.push({ label: 'نصب روی پنل شناسایی‌شده: ' + target.workerName, cls: 'btn', run: function () { close({ action: 'continue', workerName: target.workerName }); } });
+      }
+      btns.push({ label: has1101 ? 'استفاده از اکانت/توکن دیگر' : 'انصراف', cls: 'btn ghost', run: function () { close({ action: 'cancel' }); } });
+
+      actions.innerHTML = '';
+      btns.forEach(function (b) {
+        var el = document.createElement('button');
+        el.type = 'button';
+        el.className = b.cls;
+        el.textContent = b.label;
+        el.onclick = b.run;
+        actions.appendChild(el);
+      });
+
+      modal.hidden = false;
+      var first = actions.querySelector('.primary') || actions.querySelector('button');
+      if (first) try { first.focus(); } catch (e) {}
+    });
+  }
+
   async function begin(chosenAccount) {
     if (!requireProxyConfigured()) return;
     if (state.busy) return;
@@ -843,12 +997,34 @@
   return;
 }
 var preflight = await runPreflight(token, state.accountId);
+state.lastPreflight = preflight;
 state.workerName = preflight.workerName;
+state.accountId = preflight.account.id;
+
+var decision = preflight.panelDecision || {};
+var panels = Array.isArray(preflight.existingPanels) ? preflight.existingPanels : [];
+if (panels.length > 0 || (decision.action && decision.action !== 'install_new')) {
+  termWrite('run', 'existing panel check: ' + (decision.action || 'detected') + (decision.has1101 ? ' (1101 risk)' : ''));
+  var choice = await showPanelDecision(preflight);
+  if (!choice || choice.action === 'cancel') {
+    if (state._tick) { clearInterval(state._tick); state._tick = null; }
+    setStep('auth', 'ok', 'preflight passed');
+    setStep('account', 'ok', (preflight.account.name || preflight.account.id) + ' · ready');
+    $('progressCard').hidden = true;
+    $('formCard').hidden = false;
+    document.documentElement.setAttribute('data-state', 'idle');
+    setBusy(false);
+    termWrite('run', 'install cancelled by user after panel check');
+    return;
+  }
+  if (choice.workerName) state.workerName = choice.workerName;
+}
+
 setStep("auth", "ok", "token active · preflight passed");
 setStep("account", "ok", (preflight.account.name || preflight.account.id) + " · ready");
 setStep("source", "running", "GitHub source will be downloaded and verified in the background job");
 termWrite("ok", "preflight passed · " + preflight.resources.workerCountVisible + " Workers visible · " + preflight.resources.kvCountVisible + " KV namespaces visible");
-state.accountId = preflight.account.id;
+termWrite("run", "target worker: " + state.workerName);
       await startDurableInstall(token, preflight.account.id, preflight.account);
     } catch (error) {
       if (error && error.needAccountId && error.accounts && error.accounts.length) {
@@ -1392,6 +1568,10 @@ async function streamInstall(token, accountId) {
     });
     if (Object.keys(state.steps).length) { renderSteps(); updateProgress(); }
     if (state.result) renderResult(state.result);
+    var ttt = $("tokenTrustTitle"); if (ttt) ttt.textContent = t("tokenTrustTitle");
+    var hbt = $("healthBannerTitle"); if (hbt) hbt.textContent = t("healthBannerTitle");
+    var hbl = $("healthBannerLink"); if (hbl) hbl.textContent = t("healthBannerLink");
+    if (state.lastStatusPayload) updateHealthBanner(state.lastStatusPayload);
   }
 
   /* ------------------------------------------------------------------- bind */
@@ -1449,6 +1629,28 @@ async function streamInstall(token, accountId) {
     var text = getLogText() || "(no log)";
     copy(text);
   });
+  if ($("copyReportBtn")) $("copyReportBtn").addEventListener("click", function () {
+    var last = state.lastError || {};
+    var err = last.error || {};
+    var report = {
+      schema: "nova-install-error-report/v1",
+      time: new Date().toISOString(),
+      proxyVersion: state.proxyVersion || "",
+      traceId: err.traceId || state.traceId || "",
+      step: err.step || last.stepId || "",
+      reason: err.reason || "",
+      status: err.status || 0,
+      message: String(err.message || ""),
+      hint: String(err.hint || ""),
+      codes: Array.isArray(err.codes) ? err.codes.slice(0, 20) : [],
+      workerName: state.workerName || "",
+      panelAction: (state.lastPreflight && state.lastPreflight.panelDecision && state.lastPreflight.panelDecision.action) || "",
+      has1101: Boolean(state.lastPreflight && state.lastPreflight.panelDecision && state.lastPreflight.panelDecision.has1101),
+      userAgent: navigator.userAgent || ""
+    };
+    copy(JSON.stringify(report, null, 2));
+    toast(t("copiedReport") || "Copied");
+  });
   if ($("copyResultBtn")) $("copyResultBtn").addEventListener("click", function () {
     copy(buildResultText(state.result));
   });
@@ -1471,6 +1673,8 @@ async function streamInstall(token, accountId) {
 
   /* ------------------------------------------------------------------- init */
 
+  var hbd = $("healthBannerDismiss");
+  if (hbd) hbd.addEventListener("click", function () { try { sessionStorage.setItem('nova-health-banner-dismissed','1'); } catch(e) {} var b=$("healthBanner"); if(b) b.hidden=true; });
   $("token").addEventListener("keydown", function (event) {
     if (event.key === "Enter") { event.preventDefault(); begin(null); }
   });

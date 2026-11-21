@@ -156,7 +156,7 @@ export default {
     }
 
     if ((path === "/status" || path === "/status.json") && request.method === "GET") {
-      return serveStatus(url, request, env, ctx);
+      return serveStatus(url, request, env, ctx, cors.headers);
     }
 
     if ((path === "/" || path === "/app") && request.method === "GET") {
@@ -250,6 +250,103 @@ export default {
  * the installer can reject invalid tokens, wrong accounts, missing read access,
  * inaccessible KV/Workers APIs, and broken GitHub source before mutation starts.
  */
+async function detectNovaPanels(accountId, token, subdomain, scripts, namespaces, configuredWorkerName) {
+  const nsByTitle = new Map();
+  for (const ns of namespaces || []) if (ns && ns.title) nsByTitle.set(ns.title, ns);
+  const scriptIds = new Set((scripts || []).map((s) => s && s.id).filter(Boolean));
+  const candidates = [];
+  const seen = new Set();
+  const add = (id, reason) => {
+    id = String(id || "").trim();
+    if (!id || seen.has(id) || !scriptIds.has(id)) return;
+    seen.add(id);
+    candidates.push({ id, reason });
+  };
+
+  if (configuredWorkerName && scriptIds.has(configuredWorkerName)) add(configuredWorkerName, "configured_name");
+  for (const ns of namespaces || []) {
+    const t = String((ns && ns.title) || "");
+    if (t.endsWith("-kv")) {
+      const wid = t.slice(0, -3);
+      if (scriptIds.has(wid)) add(wid, "matching_kv_namespace");
+    }
+  }
+  for (const s of scripts || []) {
+    const id = String((s && s.id) || "");
+    if (/nova/i.test(id)) add(id, "name_heuristic");
+  }
+  if ((scripts || []).length <= 25) {
+    for (const s of scripts || []) add(s && s.id, "account_scan");
+  }
+
+  const limited = candidates.slice(0, 25);
+  const panels = await Promise.all(limited.map(async (c) => {
+    let bindings = [];
+    let hasKvBinding = false;
+    try {
+      const info = await cf(token, "GET", `/accounts/${accountId}/workers/scripts/${c.id}/settings`, undefined, { allow404: true });
+      bindings = info && Array.isArray(info.bindings) ? info.bindings : [];
+      hasKvBinding = bindings.some((b) => b && b.type === "kv_namespace" && String(b.name || "").toUpperCase() === "KV");
+    } catch (_) {}
+
+    const ns = nsByTitle.get(c.id + "-kv");
+    const looksNova = hasKvBinding || Boolean(ns) || c.reason === "configured_name";
+    if (!looksNova) return null;
+
+    const url = subdomain ? `https://${c.id}.${subdomain}.workers.dev` : "";
+    const health = url ? await probePanelHealth(url) : { ok: null, status: 0, reason: "no_subdomain", cloudflare1101: false };
+    return {
+      workerName: c.id,
+      url,
+      hasKvBinding,
+      hasMatchingKvNamespace: Boolean(ns),
+      health,
+      isConfiguredName: c.id === configuredWorkerName,
+      detection: c.reason,
+    };
+  }));
+
+  const dedup = new Map();
+  for (const p of panels) {
+    if (!p) continue;
+    const prev = dedup.get(p.workerName);
+    if (!prev || (p.isConfiguredName && !prev.isConfiguredName)) dedup.set(p.workerName, p);
+  }
+  return Array.from(dedup.values()).sort((a, b) => {
+    if (a.isConfiguredName !== b.isConfiguredName) return a.isConfiguredName ? -1 : 1;
+    const a1101 = a.health && a.health.cloudflare1101 ? 1 : 0;
+    const b1101 = b.health && b.health.cloudflare1101 ? 1 : 0;
+    if (a1101 !== b1101) return b1101 - a1101;
+    return a.workerName.localeCompare(b.workerName);
+  });
+}
+
+async function probePanelHealth(baseUrl) {
+  const out = { ok: null, status: 0, reason: "unknown", cloudflare1101: false };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 4500);
+  try {
+    const res = await fetch(baseUrl.replace(/\/+$/, "") + "/", {
+      signal: controller.signal,
+      redirect: "follow",
+      headers: { "User-Agent": "NovaInstall-Preflight/1.0", "Accept": "text/html,application/json,*/*" },
+    });
+    out.status = res.status || 0;
+    const text = await res.text().catch(() => "");
+    out.cloudflare1101 = out.status === 1101 || /error\s*1101|worker threw exception/i.test(text);
+    if (out.cloudflare1101) { out.ok = false; out.reason = "cloudflare_1101"; return out; }
+    if (out.status >= 200 && out.status < 500) { out.ok = true; out.reason = "reachable"; return out; }
+    out.ok = false; out.reason = "http_" + out.status;
+    return out;
+  } catch (e) {
+    out.ok = false;
+    out.reason = e && e.name === "AbortError" ? "timeout" : "network_error";
+    return out;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function preflight(request, cors, env, ctx) {
   const auth = request.headers.get("Authorization") || "";
   const token = auth.replace(/^Bearer\s+/i, "").trim();
@@ -306,6 +403,32 @@ async function preflight(request, cors, env, ctx) {
     const existingWorker = scripts.some((item) => item && item.id === config.workerName);
     const existingKv = namespaces.find((item) => item && item.title === config.workerName + "-kv") || null;
 
+    let existingPanels = [];
+    try {
+      existingPanels = await detectNovaPanels(account.id, token, subdomain, scripts, namespaces, config.workerName);
+    } catch (_) {
+      existingPanels = [];
+    }
+
+    const configuredPanel = existingPanels.find((p) => p && p.isConfiguredName) || null;
+    const brokenPanels = existingPanels.filter((p) => p && p.health && p.health.cloudflare1101);
+    const healthyPanels = existingPanels.filter((p) => p && p.health && p.health.ok && !p.health.cloudflare1101);
+    let panelAction = "install_new";
+    let panelMessage = "";
+    if (configuredPanel && configuredPanel.health && configuredPanel.health.cloudflare1101) {
+      panelAction = "existing_broken_1101";
+      panelMessage = "A panel with this worker name exists but appears to return Cloudflare 1101.";
+    } else if (brokenPanels.length) {
+      panelAction = "account_has_broken_panel";
+      panelMessage = "A Nova-like panel on this account appears broken (1101). Reinstalling on same account may hit the same issue.";
+    } else if (configuredPanel) {
+      panelAction = "existing_same_name";
+      panelMessage = "A panel with the selected worker name already exists.";
+    } else if (healthyPanels.length) {
+      panelAction = "existing_other_panel";
+      panelMessage = "Nova-like panels were detected on this account.";
+    }
+
     await recordProxyStat(env, ctx, { kind: "preflight", outcome: "ok", step: "preflight" });
     return json({
       ok: true,
@@ -327,13 +450,20 @@ async function preflight(request, cors, env, ctx) {
         workerNameAlreadyExists: existingWorker,
         kvNamespaceAlreadyExists: Boolean(existingKv),
       },
+      existingPanels,
+      panelDecision: {
+        action: panelAction,
+        message: panelMessage,
+        hasExistingPanels: existingPanels.length > 0,
+        has1101: brokenPanels.length > 0,
+      },
       source: {
         url: config.sourceUrl,
         status: "downloaded_and_verified_inside_background_job",
       },
       limitations: [
         "This is a read-only preflight; Cloudflare does not expose a reliable read-only test for every future write permission or account deployment failure.",
-        "A 1101 diagnosis requires a real deployed Worker runtime check; it cannot be guaranteed from the account email or token alone.",
+        "A 1101 diagnosis requires a real deployed Worker runtime check; detection is best-effort from the panel URL response.",
       ],
     }, 200, cors);
   } catch (error) {
@@ -1352,7 +1482,7 @@ async function getProxyStats(env) {
   }
 }
 
-async function serveStatus(url, request, env, ctx) {
+async function serveStatus(url, request, env, ctx, cors) {
   const { available, stats } = await getProxyStats(env);
   const wantsJson = url.pathname.endsWith(".json") || url.searchParams.get("format") === "json";
   const statusToken = String((env && env.STATUS_TOKEN) || "").trim();
@@ -1361,22 +1491,26 @@ async function serveStatus(url, request, env, ctx) {
   const canSeeDetails = !statusToken || (providedKey && providedKey === statusToken);
   const safeStats = canSeeDetails ? stats : { ...stats, recent: [], by_day: {}, details_redacted: true };
   const payload = { ok: true, available, service: "nova-install-proxy", version: VERSION, stats: safeStats };
+  const baseHeaders = {
+    ...(cors || {}),
+    "Cache-Control": "no-store",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+  };
   if (wantsJson) {
     return new Response(JSON.stringify(payload, null, 2), {
       status: 200,
       headers: {
+        ...baseHeaders,
         "Content-Type": "application/json; charset=utf-8",
-        "Cache-Control": "no-store",
-        "X-Content-Type-Options": "nosniff",
       },
     });
   }
   return new Response(renderStatusHtml(payload), {
     status: 200,
     headers: {
+      ...baseHeaders,
       "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "no-store",
-      "X-Content-Type-Options": "nosniff",
     },
   });
 }
@@ -1385,85 +1519,222 @@ function escHtml(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-function renderPairs(title, obj) {
+function renderPairs(title, obj, subtitle) {
   const entries = Object.entries(obj || {}).sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0]));
-  if (!entries.length) return `<section class="card"><h2>${escHtml(title)}</h2><p class="muted">داده‌ای ثبت نشده است.</p></section>`;
-  const rows = entries.map(([k, v]) => `<tr><td>${escHtml(k)}</td><td class="num">${Number(v) || 0}</td></tr>`).join("");
-  return `<section class="card"><h2>${escHtml(title)}</h2><table><thead><tr><th>کلید</th><th>تعداد</th></tr></thead><tbody>${rows}</tbody></table></section>`;
+  if (!entries.length) {
+    return `<section class="card"><div class="card-head"><h2>${escHtml(title)}</h2>${subtitle ? `<p>${escHtml(subtitle)}</p>` : ""}</div><div class="empty">هنوز داده‌ای ثبت نشده است.</div></section>`;
+  }
+  const total = entries.reduce((n, [, v]) => n + (Number(v) || 0), 0) || 1;
+  const rows = entries.map(([k, v]) => {
+    const val = Number(v) || 0;
+    const pct = Math.max(0, Math.min(100, (val / total) * 100));
+    return `<tr><td><div class="key">${escHtml(k)}</div><div class="mini-bar"><span style="width:${pct.toFixed(1)}%"></span></div></td><td class="num"><span class="count">${val}</span></td></tr>`;
+  }).join("");
+  return `<section class="card"><div class="card-head"><h2>${escHtml(title)}</h2>${subtitle ? `<p>${escHtml(subtitle)}</p>` : ""}</div><div class="table-wrap"><table><thead><tr><th>کلید</th><th>تعداد</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
 }
 
 function renderStatusHtml(payload) {
   const s = payload.stats || emptyProxyStats();
-  const recent = Array.isArray(s.recent) ? s.recent.slice().reverse() : [];
-  const recentRows = recent.length ? recent.map((e) => `<tr><td class="mono">${escHtml(e.at || "")}</td><td>${escHtml(e.kind || "")}</td><td>${escHtml(e.mode || "")}</td><td>${escHtml(e.step || "")}</td><td>${escHtml(e.reason || "")}</td><td>${escHtml(e.outcome || "")}</td></tr>`).join("") : '<tr><td colspan="6" class="muted">رویدادی ثبت نشده است.</td></tr>';
+  const recent = Array.isArray(s.recent) ? s.recent.slice().reverse().slice(0, 60) : [];
+  const recentRows = recent.length ? recent.map((e) => {
+    const outcome = String(e.outcome || "");
+    const reason = String(e.reason || "-");
+    const cls = outcome === "ok" || outcome === "success_verified" ? "ok" : (outcome === "failed" ? "bad" : "warn");
+    return `<tr>
+      <td class="mono">${escHtml(e.at || "")}</td>
+      <td><span class="pill">${escHtml(e.kind || "-")}</span></td>
+      <td class="mono">${escHtml(e.mode || "-")}</td>
+      <td class="mono">${escHtml(e.step || "-")}</td>
+      <td class="mono">${escHtml(reason)}</td>
+      <td><span class="pill ${cls}">${escHtml(outcome || "-")}</span></td>
+    </tr>`;
+  }).join("") : '<tr><td colspan="6" class="empty-row">هنوز رویدادی ثبت نشده است.</td></tr>';
+
+  const dayEntries = Object.entries((s.by_day && typeof s.by_day === "object") ? s.by_day : {}).sort((a, b) => a[0].localeCompare(b[0])).slice(-14);
+  const dayRows = dayEntries.length ? dayEntries.map(([day, d]) => {
+    const dd = d || {};
+    return `<tr><td class="mono">${escHtml(day)}</td><td class="num">${Number(dd.attempts||0)}</td><td class="num ok-t">${Number(dd.success||0)}</td><td class="num warn-t">${Number(dd.unverified||0)}</td><td class="num bad-t">${Number(dd.failed||0)}</td><td class="num">${Number(dd.preflight_ok||0)}/${Number(dd.preflight_failed||0)}</td><td class="num bad-t">${Number(dd.err_1101||0)}</td></tr>`;
+  }).join("") : '<tr><td colspan="7" class="empty-row">هنوز دادهٔ روزانه ثبت نشده است.</td></tr>';
+
+  const success = Number(s.install.success_verified || 0);
+  const unverified = Number(s.install.completed_unverified || 0);
+  const failed = Number(s.install.failed || 0);
+  const attempts = Number(s.install.attempts || 0);
+  const preOk = Number(s.preflight.ok || 0);
+  const preFail = Number(s.preflight.failed || 0);
+  const e1101 = Number((s.reasons && s.reasons.cloudflare_1101) || 0);
+
   return `<!doctype html>
 <html lang="fa" dir="rtl">
 <head>
 <meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>NovaInstall Status</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<meta name="robots" content="noindex,nofollow"/>
+<title>Nova Install — وضعیت سرویس</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#0b1220;--card:#111827;--bd:#1f2937;--tx:#e5e7eb;--mu:#94a3b8;--ac:#22d3ee;--ok:#4ade80;--dg:#fb7185;--wn:#fbbf24}
-*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#0b1220,#0f172a);color:var(--tx);font-family:Tahoma,system-ui,sans-serif;line-height:1.7}
-.wrap{max-width:1100px;margin:0 auto;padding:24px 16px 48px}
-h1{margin:0 0 6px;font-size:24px} .sub{color:var(--mu);margin:0 0 18px;font-size:13px}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px}
-.metric{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px}
-.metric .k{color:var(--mu);font-size:12px}.metric .v{font-size:28px;font-weight:800;margin-top:2px}
-.ok{color:var(--ok)}.dg{color:var(--dg)}.wn{color:var(--wn)}.ac{color:var(--ac)}
-.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
-.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px;margin-bottom:14px}
-.card h2{margin:0 0 10px;font-size:15px}
-table{width:100%;border-collapse:collapse;font-size:13px}
-th,td{padding:8px 6px;border-bottom:1px solid var(--bd);text-align:right;vertical-align:top}
-th{color:var(--mu);font-weight:700}
-.num,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;direction:ltr;text-align:left}
-.muted{color:var(--mu)} .badge{display:inline-block;padding:2px 8px;border-radius:999px;background:#0b1220;border:1px solid var(--bd);font-size:12px;color:var(--mu)}
-.top{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:8px}
-a{color:var(--ac)}
+:root{
+  --bg:#f4f6fb; --card:#ffffff; --card2:#f7f9fc; --bd:#e6eaf1; --bd2:#dde2eb;
+  --tx:#0b1220; --tx2:#3a4558; --mu:#8a93a6;
+  --ac:#0ea5c4; --ac2:#7c3aed; --ok:#16a34a; --dg:#e5484d; --wn:#b45309;
+  --grad:linear-gradient(120deg,#0891b2,#7c3aed);
+  --ok-soft:rgba(22,163,74,.08); --dg-soft:rgba(229,72,77,.08); --wn-soft:rgba(180,83,9,.08); --ac-soft:rgba(14,165,196,.09);
+  --shadow:0 1px 2px rgba(20,40,80,.04),0 22px 50px rgba(40,60,110,.12);
+  --shadow-sm:0 1px 2px rgba(20,40,80,.05);
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{min-height:100vh;background:var(--bg);color:var(--tx);font-family:'Vazirmatn',Tahoma,system-ui,sans-serif;line-height:1.8;overflow-x:hidden}
+body::before{content:"";position:fixed;inset:0;z-index:-2;pointer-events:none;background:radial-gradient(760px 420px at 12% -10%,rgba(14,165,196,.16),transparent 62%),radial-gradient(700px 430px at 92% 2%,rgba(124,58,237,.14),transparent 58%),radial-gradient(900px 520px at 50% 120%,rgba(14,165,196,.10),transparent 60%)}
+body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.45;background-image:linear-gradient(rgba(16,22,34,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(16,22,34,.035) 1px,transparent 1px);background-size:44px 44px;-webkit-mask-image:radial-gradient(760px 620px at 50% 30%,#000 18%,transparent 78%);mask-image:radial-gradient(760px 620px at 50% 30%,#000 18%,transparent 78%)}
+.wrap{max-width:1200px;margin:0 auto;padding:28px 18px 56px;position:relative}
+.hero{background:var(--card);border:1px solid var(--bd);border-radius:24px;box-shadow:var(--shadow);padding:28px;position:relative;overflow:hidden;margin-bottom:18px}
+.hero::before{content:"";position:absolute;inset:0 0 auto 0;height:4px;background:var(--grad)}
+.top{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:14px}
+.logo{width:52px;height:52px;border-radius:16px;display:grid;place-items:center;background:linear-gradient(180deg,#fff,#f6f9fd);border:1px solid var(--bd);box-shadow:0 8px 20px rgba(40,60,110,.10),inset 0 1px 0 #fff;color:var(--ac);font-weight:800;font-size:18px}
+.eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--ac);background:var(--ac-soft);border:1px solid rgba(14,165,196,.18);padding:5px 11px;border-radius:999px;margin-bottom:8px}
+h1{margin:0;font-size:30px;line-height:1.3;letter-spacing:-.5px;font-weight:800}
+.sub{margin:8px 0 0;color:var(--tx2);font-size:14px;max-width:70ch}
+.badges{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border-radius:999px;background:var(--card2);border:1px solid var(--bd);font-size:12px;font-weight:700;color:var(--tx2)}
+.badge b{color:var(--tx);font-weight:800}
+.badge.live::before{content:"";width:8px;height:8px;border-radius:50%;background:${payload.available ? "var(--ok)" : "var(--wn)"};box-shadow:0 0 0 4px ${payload.available ? "rgba(22,163,74,.12)" : "rgba(180,83,9,.12)"}}
+.badge code{font-family:var(--mono);font-size:11px;direction:ltr}
+.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:18px}
+.metric{background:var(--card);border:1px solid var(--bd);border-radius:18px;padding:18px;box-shadow:var(--shadow-sm)}
+.metric .k{font-size:12px;color:var(--mu);font-weight:700;margin-bottom:6px}
+.metric .v{font-size:32px;line-height:1.1;font-weight:800;letter-spacing:-.5px}
+.metric .h{font-size:12px;color:var(--tx2);margin-top:8px}
+.ok-t{color:var(--ok)} .bad-t{color:var(--dg)} .warn-t{color:var(--wn)} .ac-t{color:var(--ac)}
+.section{margin-bottom:18px}
+.section-title{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 12px;padding:0 2px}
+.section-title h2{margin:0;font-size:16px;font-weight:800}
+.section-title span{font-size:12px;color:var(--mu);font-weight:600}
+.cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:20px;box-shadow:var(--shadow-sm);padding:18px;min-width:0}
+.card-head{margin-bottom:12px}
+.card-head h2{margin:0;font-size:15px;font-weight:800}
+.card-head p{margin:4px 0 0;font-size:12px;color:var(--mu)}
+.table-wrap{overflow:auto;border:1px solid var(--bd);border-radius:14px}
+table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px;min-width:100%}
+th,td{padding:11px 12px;text-align:right;vertical-align:middle;border-bottom:1px solid var(--bd)}
+th{font-size:11.5px;color:var(--mu);font-weight:800;background:var(--card2);position:sticky;top:0;z-index:1}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover td{background:#fbfcff}
+.key{font-weight:700;color:var(--tx);direction:ltr;text-align:left;word-break:break-word}
+.mini-bar{margin-top:7px;height:6px;background:#edf2f8;border-radius:999px;overflow:hidden}
+.mini-bar span{display:block;height:100%;border-radius:999px;background:var(--grad)}
+.num{font-family:var(--mono);direction:ltr;text-align:left;white-space:nowrap}
+.mono{font-family:var(--mono);font-size:12px;direction:ltr;text-align:left;white-space:nowrap}
+.count{display:inline-flex;align-items:center;justify-content:center;min-width:34px;padding:2px 8px;border-radius:999px;background:var(--card2);border:1px solid var(--bd);font-size:12px;font-weight:700}
+.pill{display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;font-size:11px;font-weight:800;background:var(--card2);border:1px solid var(--bd);color:var(--tx2);white-space:nowrap}
+.pill.ok{background:var(--ok-soft);border-color:rgba(22,163,74,.18);color:var(--ok)}
+.pill.bad{background:var(--dg-soft);border-color:rgba(229,72,77,.18);color:var(--dg)}
+.pill.warn{background:var(--wn-soft);border-color:rgba(180,83,9,.18);color:var(--wn)}
+.empty,.empty-row{padding:22px 14px;text-align:center;color:var(--mu);font-size:13px;background:linear-gradient(180deg,#fff,var(--card2))}
+.info-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.info{background:var(--card2);border:1px solid var(--bd);border-radius:14px;padding:12px 14px}
+.info .k{font-size:11.5px;color:var(--mu);font-weight:700;margin-bottom:4px}
+.info .v{font-size:13px;font-weight:700;color:var(--tx);word-break:break-word}
+.info .v.mono{font-size:12px}
+.footer{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:18px;padding:0 4px;color:var(--mu);font-size:12px}
+.footer a{color:var(--tx2);text-decoration:none;font-weight:700}
+.footer a:hover{color:var(--ac)}
+@media (max-width:1020px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.info-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:760px){.wrap{padding:18px 12px 44px}.hero{padding:22px 18px;border-radius:20px}h1{font-size:24px}.cards{grid-template-columns:1fr}.grid{grid-template-columns:1fr 1fr}.badges{justify-content:flex-start}.mono{white-space:normal}}
+@media (max-width:520px){.grid,.info-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <div class="top">
-    <div>
-      <h1>آمار نصب NovaInstall (Proxy)</h1>
-      <p class="sub">آمار تجمیعی و تفکیکی روی همان Worker پردازش • <a href="/status.json">JSON</a> • <span class="badge">version ${escHtml(payload.version)}</span> • <span class="badge">storage ${payload.available ? "available" : "unavailable"}</span></p>
+  <div class="wrap">
+    <section class="hero">
+      <div class="top">
+        <div class="brand">
+          <div class="logo">N</div>
+          <div>
+            <div class="eyebrow">Nova Install · Processing Status</div>
+            <h1>وضعیت سرویس نصب Nova</h1>
+            <p class="sub">نمای کلی سلامت و آمار تجمیعی سرویس پردازش نصب. این داده‌ها برای پایش عملکرد، خطاها و روند نصب‌ها نمایش داده می‌شوند.</p>
+          </div>
+        </div>
+        <div class="badges">
+          <span class="badge live"><b>Storage</b> ${payload.available ? "Available" : "Unavailable"}</span>
+          <span class="badge"><b>Version</b> <code>${escHtml(payload.version || "-")}</code></span>
+          <span class="badge"><b>JSON</b> <a href="/status.json" style="color:var(--ac);text-decoration:none;font-weight:800">/status.json</a></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid" aria-label="metrics">
+      <article class="metric"><div class="k">کل تلاش‌های نصب</div><div class="v ac-t">${attempts}</div><div class="h">کل درخواست‌های نصب ثبت‌شده</div></article>
+      <article class="metric"><div class="k">نصب موفق تأییدشده</div><div class="v ok-t">${success}</div><div class="h">نصب‌هایی که صحت آن‌ها تأیید شد</div></article>
+      <article class="metric"><div class="k">نصب ناموفق</div><div class="v bad-t">${failed}</div><div class="h">نیازمند بررسی دلیل/مرحله</div></article>
+      <article class="metric"><div class="k">خطای Cloudflare 1101</div><div class="v ${e1101 ? "bad-t" : "ok-t"}">${e1101}</div><div class="h">طبقه‌بندی جداگانه برای خطای لبه</div></article>
+    </section>
+
+    <section class="section">
+      <div class="section-title"><h2>خلاصهٔ عملیاتی</h2><span>نمای سریع وضعیت سرویس</span></div>
+      <div class="info-grid">
+        <div class="info"><div class="k">اولین رویداد</div><div class="v mono">${escHtml(s.firstEventAt || "-")}</div></div>
+        <div class="info"><div class="k">آخرین رویداد</div><div class="v mono">${escHtml(s.lastEventAt || "-")}</div></div>
+        <div class="info"><div class="k">Preflight</div><div class="v"><span class="ok-t">${preOk} OK</span> · <span class="bad-t">${preFail} Failed</span></div></div>
+        <div class="info"><div class="k">حالت اجرا</div><div class="v">Durable: ${(s.install.by_mode && s.install.by_mode.durable) || 0} · Stream: ${(s.install.by_mode && s.install.by_mode.stream) || 0}</div></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title"><h2>تحلیل خطاها و پیش‌بررسی</h2><span>طبقه‌بندی بر اساس مرحله و دلیل</span></div>
+      <div class="cards">
+        ${renderPairs("خطاهای نصب بر اساس مرحله", s.failures.by_step, "کدام مرحله بیشترین خطا را داشته است")}
+        ${renderPairs("خطاهای نصب بر اساس دلیل", s.failures.by_reason, "دلیل‌های طبقه‌بندی‌شدهٔ شکست نصب")}
+        ${renderPairs("شمارندهٔ دلایل", s.reasons, "نمای تجمیعی دلیل‌ها/کدهای مهم")}
+        ${renderPairs("Preflight ناموفق بر اساس دلیل", s.preflight.by_reason, "مشکلات قبل از شروع نصب")}
+        ${renderPairs("Preflight ناموفق بر اساس مرحله", s.preflight.by_step, "مرحلهٔ شکست در پیش‌بررسی")}
+        <section class="card">
+          <div class="card-head"><h2>وضعیت نصب‌ها</h2><p>تفکیک نتیجهٔ نهایی نصب‌ها</p></div>
+          <div class="info-grid" style="grid-template-columns:repeat(2,minmax(0,1fr));">
+            <div class="info"><div class="k">موفق تأییدشده</div><div class="v ok-t">${success}</div></div>
+            <div class="info"><div class="k">تکمیل‌شده (تأییدنشده)</div><div class="v warn-t">${unverified}</div></div>
+            <div class="info"><div class="k">ناموفق</div><div class="v bad-t">${failed}</div></div>
+            <div class="info"><div class="k">کل تلاش‌ها</div><div class="v ac-t">${attempts}</div></div>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title"><h2>روند روزانه (۱۴ روز اخیر)</h2><span>تجمیع روزانهٔ رویدادها</span></div>
+      <div class="card">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>روز</th><th>تلاش</th><th>موفق</th><th>تأییدنشده</th><th>ناموفق</th><th>Preflight OK/Fail</th><th>1101</th></tr></thead>
+            <tbody>${dayRows}</tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title"><h2>رویدادهای اخیر</h2><span>آخرین ${recent.length} رویداد (بدون اطلاعات حساس)</span></div>
+      <div class="card">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>زمان</th><th>نوع</th><th>حالت</th><th>مرحله</th><th>دلیل</th><th>نتیجه</th></tr></thead>
+            <tbody>${recentRows}</tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <div class="footer">
+      <span>Nova Install Proxy · وضعیت تجمیعی سرویس</span>
+      <span style="display:flex;gap:14px;flex-wrap:wrap"><a href="/health">Health</a><a href="/status.json">JSON</a></span>
     </div>
   </div>
-  <div class="grid">
-    <div class="metric"><div class="k">تلاش نصب (کل)</div><div class="v ac">${s.install.attempts || 0}</div></div>
-    <div class="metric"><div class="k">نصب موفق (تأیید شده)</div><div class="v ok">${s.install.success_verified || 0}</div></div>
-    <div class="metric"><div class="k">اتمام بدون تأیید</div><div class="v wn">${s.install.completed_unverified || 0}</div></div>
-    <div class="metric"><div class="k">نصب ناموفق (کل)</div><div class="v dg">${s.install.failed || 0}</div></div>
-    <div class="metric"><div class="k">خطای 1101 (کل)</div><div class="v dg">${s.reasons.cloudflare_1101 || 0}</div></div>
-    <div class="metric"><div class="k">Preflight موفق</div><div class="v ok">${s.preflight.ok || 0}</div></div>
-    <div class="metric"><div class="k">Preflight ناموفق</div><div class="v dg">${s.preflight.failed || 0}</div></div>
-  </div>
-  <div class="card">
-    <h2>خلاصه زمانی و تفکیک حالت</h2>
-    <table><tbody>
-      <tr><th>اولین رویداد</th><td class="mono">${escHtml(s.firstEventAt || "-")}</td></tr>
-      <tr><th>آخرین رویداد</th><td class="mono">${escHtml(s.lastEventAt || "-")}</td></tr>
-      <tr><th>تلاش Durable Job</th><td class="num">${(s.install.by_mode && s.install.by_mode.durable) || 0}</td></tr>
-      <tr><th>تلاش Stream (قدیمی)</th><td class="num">${(s.install.by_mode && s.install.by_mode.stream) || 0}</td></tr>
-    </tbody></table>
-  </div>
-  <div class="cols">
-    ${renderPairs("خطاهای نصب بر اساس مرحله (step)", s.failures.by_step)}
-    ${renderPairs("خطاهای نصب بر اساس دلیل/دسته", s.failures.by_reason)}
-    ${renderPairs("دلایل مهم (شمارنده سریع)", s.reasons)}
-    ${renderPairs("Preflight ناموفق بر اساس دلیل", s.preflight.by_reason)}
-    ${renderPairs("Preflight ناموفق بر اساس مرحله", s.preflight.by_step)}
-  </div>
-  <section class="card">
-    <h2>آخرین رویدادها (بدون داده حساس)</h2>
-    <div style="overflow:auto"><table>
-      <thead><tr><th>زمان</th><th>نوع</th><th>حالت</th><th>مرحله</th><th>دلیل</th><th>نتیجه</th></tr></thead>
-      <tbody>${recentRows}</tbody>
-    </table></div>
-  </section>
-</div>
 </body>
 </html>`;
 }

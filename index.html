@@ -57,7 +57,19 @@
     <div class="service-status-meta" id="serviceStatusMeta"></div>
   </section>
 
-    <div class="entry-grid" id="formCard">
+    <div class="health-banner" id="healthBanner" hidden role="status" aria-live="polite">
+    <div class="health-banner-icon" aria-hidden="true">!</div>
+    <div class="health-banner-body">
+      <div class="health-banner-title" id="healthBannerTitle">هشدار وضعیت سرویس</div>
+      <div class="health-banner-text" id="healthBannerText">در حال حاضر بخشی از نصب‌ها با خطا مواجه هستند. قبل از نصب، وضعیت سرویس را بررسی کنید.</div>
+    </div>
+    <div class="health-banner-actions">
+      <a class="btn" id="healthBannerLink" href="./stats.html" target="_blank" rel="noopener noreferrer">مشاهده وضعیت</a>
+      <button class="btn ghost" type="button" id="healthBannerDismiss">بستن</button>
+    </div>
+  </div>
+
+  <div class="entry-grid" id="formCard">
     <section class="entry-card ec-install">
       <div class="ec-ico" aria-hidden="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
@@ -86,7 +98,10 @@
         <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
         <span data-i18n="installBtn">شروع نصب</span>
       </button>
-      <p class="hint warn" style="margin-top:12px" data-i18n="securityNote">توکن فقط در حافظهٔ همین مرورگر می‌ماند و برای نصب به api.cloudflare.com فرستاده می‌شود؛ ذخیره نمی‌شود. بعد از نصب می‌توانی توکن را Revoke کنی.</p>
+      <div class="trust-box" aria-label="Token security">
+        <div class="trust-box-title" id="tokenTrustTitle">شفافیت امنیت توکن</div>
+        <p class="trust-box-body" id="tokenTrustBody" data-i18n="securityNote">توکن فقط برای فراخوانی API کلودفلر از طریق پراکسی استفاده می‌شود؛ در آمار/گزارش ذخیره نمی‌شود و بعد از شروع نصب از فیلد پاک می‌شود. پس از نصب می‌توانید آن را Revoke کنید.</p>
+      </div>
     </section>
 
     <section class="entry-card ec-token">
@@ -158,6 +173,7 @@
       <button class="btn" type="button" id="retryBtn" data-i18n="retry">تلاش دوباره</button>
       <button class="btn" type="button" id="copyErrorBtn" data-i18n="copyDetails">کپی جزئیات</button>
       <button class="btn" type="button" id="copyLogBtn" data-i18n="copyLog">کپی گزارش</button>
+      <button class="btn" type="button" id="copyReportBtn" data-i18n="copyReport">کپی گزارش کامل (JSON)</button>
     </div>
   </section>
 
@@ -223,6 +239,20 @@
       <a href="https://github.com/IRNova/NovaInstall/issues/new/choose" target="_blank" rel="noopener noreferrer" data-i18n="helpLink">Help / Report</a>
     </span>
   </footer>
+</div>
+
+<div class="modal-backdrop" id="panelModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="panelModalTitle">
+    <div class="modal-head">
+      <div class="modal-icon" id="panelModalIcon">!</div>
+      <div>
+        <h2 id="panelModalTitle">پنل موجود شناسایی شد</h2>
+        <p id="panelModalDesc" class="hint" style="margin:6px 0 0"></p>
+      </div>
+    </div>
+    <div class="modal-body" id="panelModalBody"></div>
+    <div class="modal-actions" id="panelModalActions"></div>
+  </div>
 </div>
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
