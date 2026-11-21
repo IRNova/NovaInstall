@@ -34,10 +34,23 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
 
+      - name: Prepare Pages artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf dist-pages
+          mkdir -p dist-pages/assets
+          cp index.html manifest.webmanifest sw.js stats.html stats.json .nojekyll dist-pages/
+          cp -R assets/. dist-pages/assets/
+          # Include only files needed by the public installer UI.
+          test -f dist-pages/index.html
+          test -f dist-pages/assets/nova-install.js
+          test -f dist-pages/assets/proxy-endpoint.js
+
       - name: Upload installer UI artifact
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
-          path: .
+          path: dist-pages
 
   deploy:
     environment:
