@@ -256,30 +256,34 @@ async function detectNovaPanels(accountId, token, subdomain, scripts, namespaces
   const scriptIds = new Set((scripts || []).map((s) => s && s.id).filter(Boolean));
   const candidates = [];
   const seen = new Set();
-  const add = (id, reason) => {
+  const add = (id, reason, priority = 1) => {
     id = String(id || "").trim();
     if (!id || seen.has(id) || !scriptIds.has(id)) return;
     seen.add(id);
-    candidates.push({ id, reason });
+    candidates.push({ id, reason, priority });
   };
 
-  if (configuredWorkerName && scriptIds.has(configuredWorkerName)) add(configuredWorkerName, "configured_name");
+  if (configuredWorkerName && scriptIds.has(configuredWorkerName)) add(configuredWorkerName, "configured_name", 100);
   for (const ns of namespaces || []) {
     const t = String((ns && ns.title) || "");
     if (t.endsWith("-kv")) {
       const wid = t.slice(0, -3);
-      if (scriptIds.has(wid)) add(wid, "matching_kv_namespace");
+      if (scriptIds.has(wid)) add(wid, "matching_kv_namespace", 80);
     }
   }
   for (const s of scripts || []) {
     const id = String((s && s.id) || "");
-    if (/nova/i.test(id)) add(id, "name_heuristic");
+    if (/nova/i.test(id)) add(id, "name_heuristic", 60);
   }
-  if ((scripts || []).length <= 25) {
-    for (const s of scripts || []) add(s && s.id, "account_scan");
+  // "Check by any route": when account has few scripts, scan them all; otherwise rely on strong signals above.
+  if ((scripts || []).length <= 15) {
+    for (const s of scripts || []) add(s && s.id, "account_scan", 10);
   }
 
-  const limited = candidates.slice(0, 25);
+  const limited = candidates.sort((a, b) => b.priority - a.priority).slice(0, 12);
+  const probeBudget = 5;
+  let probed = 0;
+
   const panels = await Promise.all(limited.map(async (c) => {
     let bindings = [];
     let hasKvBinding = false;
@@ -294,7 +298,12 @@ async function detectNovaPanels(accountId, token, subdomain, scripts, namespaces
     if (!looksNova) return null;
 
     const url = subdomain ? `https://${c.id}.${subdomain}.workers.dev` : "";
-    const health = url ? await probePanelHealth(url) : { ok: null, status: 0, reason: "no_subdomain", cloudflare1101: false };
+    let health = { ok: null, status: 0, reason: url ? "not_probed" : "no_subdomain", cloudflare1101: false };
+    const shouldProbe = Boolean(url) && (c.reason === "configured_name" || probed < probeBudget);
+    if (shouldProbe) {
+      probed += 1;
+      health = await probePanelHealth(url, 2200);
+    }
     return {
       workerName: c.id,
       url,
@@ -321,10 +330,10 @@ async function detectNovaPanels(accountId, token, subdomain, scripts, namespaces
   });
 }
 
-async function probePanelHealth(baseUrl) {
+async function probePanelHealth(baseUrl, timeoutMs = 2500) {
   const out = { ok: null, status: 0, reason: "unknown", cloudflare1101: false };
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 4500);
+  const timer = setTimeout(() => controller.abort(), Math.max(800, Number(timeoutMs) || 2500));
   try {
     const res = await fetch(baseUrl.replace(/\/+$/, "") + "/", {
       signal: controller.signal,
