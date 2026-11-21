@@ -1,0 +1,41 @@
+name: Feature request / پیشنهاد قابلیت
+description: Suggest an improvement for NovaInstall
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component / بخش
+      options:
+        - Web Installer UI (GitHub Pages)
+        - Processing Proxy (Cloudflare Worker)
+        - GitHub Actions / CLI Install
+        - Telegram Bot
+        - Desktop Wizard (Windows)
+        - Stats / Docs
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / need / مشکل یا نیاز
+      description: What problem should this feature solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution / راهکار پیشنهادی
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact / تاثیر
+      description: How does this improve install success, reliability, security, or UX?
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional notes / توضیحات تکمیلی

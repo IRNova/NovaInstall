@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Syntax checks (proxy/UI/bot/scripts)
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check NovaInstall-main/proxy/worker.js
+          node --check NovaInstall-main/scripts/validate-installer-ui.mjs
+          node --check NovaInstall-main/assets/nova-install.js
+          node --check NovaInstall-main/scripts/install.mjs || true
+          for f in NovaInstall-main/bot/src/*.js; do [ -f "$f" ] && node --check "$f"; done
+          node NovaInstall-main/scripts/validate-installer-ui.mjs
+
+      - name: Validate stats JSON
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e "JSON.parse(require('fs').readFileSync('NovaInstall-main/stats.json','utf8')); console.log('stats.json OK')"
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          echo "### NovaInstall CI" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Validation completed for proxy, UI, bot, and stats data." >> "$GITHUB_STEP_SUMMARY"

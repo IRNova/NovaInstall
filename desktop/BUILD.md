@@ -1,37 +1,38 @@
-# ساخت نسخهٔ دسکتاپ NovaInstall
+# Building Nova Wizard from Source
 
-منبع این پوشه از **Nova Wizard** به NovaInstall منتقل شده است.
+## Prerequisites
 
-## پیش‌نیاز
+- Python 3.14+
+- Windows (for the final EXE)
 
-- Python 3.10+
-- (اختیاری برای EXE) PyInstaller
-
-## اجرای توسعه
+## Setup
 
 ```bash
-cd desktop
-python3 nova_wizard.py
+# Install dependencies
+pip install pyinstaller Pillow
+
+# (Optional) Create a virtual environment
+python -m venv venv
+venv\Scripts\activate
+pip install pyinstaller Pillow
 ```
 
-اگر `static/index.html` کنار اسکریپت باشد همان UI لود می‌شود؛ وگرنه نسخهٔ embed داخل `nova_wizard.py`.
+## Build
 
-## همگام‌سازی UI embed
-
-```bash
-python3 scripts/embed_ui.py
-python3 scripts/embed_ui.py --check
+```batch
+pyinstaller --onefile --name NovaWizard --add-data "static;static" --icon app.ico nova_wizard.py
 ```
 
-## EXE ویندوز
+> **Note:** The `static/` folder must exist in the same directory as `nova_wizard.py` at build time. It contains `index.html` (the frontend) and is not distributed publicly.
 
-```bash
-pip install pyinstaller
-pyinstaller --onefile --name NovaInstall --add-data "static;static" nova_wizard.py
+## After Build
+
+The EXE will be at `dist/NovaWizard.exe`. Copy it anywhere — it's fully portable.
+
+## Run
+
+```
+NovaWizard.exe
 ```
 
-خروجی را در GitHub Releases ریپوی **NovaInstall** منتشر کنید.
-
-دانلود موقت (Release قدیمی Wizard):
-
-https://github.com/IRNova/Nova-Wizard/releases/download/V1.0.0/NovaWizard.exe
+A terminal opens with a local URL. Open it in your browser and follow the steps.

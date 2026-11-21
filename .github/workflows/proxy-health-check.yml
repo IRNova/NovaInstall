@@ -1,0 +1,43 @@
+name: Proxy Health Check (manual/scheduled)
+
+on:
+  workflow_dispatch:
+    inputs:
+      proxy_url:
+        description: "Base URL of processing proxy (e.g. https://nova-install.example.workers.dev)"
+        required: false
+        default: ""
+  schedule:
+    - cron: "17 */6 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check proxy health and status endpoints
+        shell: bash
+        env:
+          PROXY_URL_INPUT: ${{ inputs.proxy_url }}
+          PROXY_URL_SECRET: ${{ secrets.NOVA_PROXY_URL }}
+        run: |
+          set -euo pipefail
+          URL="${PROXY_URL_INPUT:-${PROXY_URL_SECRET:-}}"
+          if [ -z "$URL" ]; then
+            echo "No proxy URL provided (input proxy_url or secret NOVA_PROXY_URL). Skipping."
+            echo "### Proxy Health Check" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Skipped: no proxy URL configured." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          URL="${URL%/}"
+          echo "Checking $URL"
+          curl -fsS "$URL/health" | tee health.json
+          echo
+          curl -fsS "$URL/status.json" | head -c 4000 | tee status.json
+          echo
+          echo "### Proxy Health Check" >> "$GITHUB_STEP_SUMMARY"
+          echo "- URL: $URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "- /health: OK" >> "$GITHUB_STEP_SUMMARY"
+          echo "- /status.json: OK" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,60 @@
+name: Record successful Nova installs
+
+on:
+  repository_dispatch:
+    types: [nova_install_success]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nova-install-stats
+  cancel-in-progress: false
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout statistics
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update successful install count
+        env:
+          EVENT_ID: ${{ github.event.client_payload.event_id || format('manual-{0}', github.run_id) }}
+          VERSION: ${{ github.event.client_payload.version || '' }}
+          BUILD: ${{ github.event.client_payload.build || '' }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = 'stats.json';
+          const data = JSON.parse(fs.readFileSync(path, 'utf8'));
+          const eventId = process.env.EVENT_ID;
+          if (!eventId || typeof eventId !== 'string') throw new Error('Missing event ID');
+          data.processedEvents = Array.isArray(data.processedEvents) ? data.processedEvents : [];
+          if (!data.processedEvents.includes(eventId)) {
+            data.successfulInstalls = Number(data.successfulInstalls || 0) + 1;
+            data.processedEvents.push(eventId);
+            if (data.processedEvents.length > 10000) data.processedEvents = data.processedEvents.slice(-10000);
+            data.updatedAt = new Date().toISOString();
+            data.lastVersion = String(process.env.VERSION || '').slice(0, 80);
+            data.lastBuild = String(process.env.BUILD || '').slice(0, 80);
+            fs.writeFileSync(path, JSON.stringify(data, null, 2) + '\n');
+          } else {
+            console.log('Duplicate install event; count unchanged.');
+          }
+          NODE
+
+      - name: Commit updated statistics
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add stats.json
+          if git diff --cached --quiet; then
+            echo "No statistics update needed."
+          else
+            git commit -m "chore(stats): record successful Nova install"
+            git push origin HEAD:main
+          fi
